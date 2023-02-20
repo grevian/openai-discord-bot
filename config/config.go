@@ -3,18 +3,19 @@ package config
 import (
 	"context"
 	"fmt"
-	"github.com/pkg/errors"
+	"net/http"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 	gpt "github.com/sashabaranov/go-gpt3"
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
 )
 
 var logger *zap.Logger
 
-func Configure() {
+func Configure(serviceCtx context.Context) {
 	viper.SetEnvPrefix("BOT")
 	viper.AutomaticEnv()
 
@@ -28,6 +29,11 @@ func Configure() {
 		panic(err)
 	}
 
+	logger.Info("Configuring tracing")
+	tracingErr := configureTracing(serviceCtx, logger)
+	if tracingErr != nil {
+		logger.Error("failed to initialize tracer", zap.Error(tracingErr))
+	}
 }
 
 func GetLogger() *zap.Logger {
@@ -45,6 +51,7 @@ func GetDiscordSession() (*discordgo.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	discordSession.Client.Transport = otelhttp.NewTransport(http.DefaultTransport)
 
 	return discordSession, nil
 }
@@ -52,9 +59,12 @@ func GetDiscordSession() (*discordgo.Session, error) {
 func GetOpenAISession() (*gpt.Client, error) {
 	authToken := viper.GetString("OPENAI_AUTH_TOKEN")
 	if authToken == "" {
-		return nil, errors.New("No authToken is present in configuration")
+		return nil, fmt.Errorf("no authToken is present in configuration")
 	}
 	client := gpt.NewClient(authToken)
+	client.HTTPClient = &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
 
 	request := gpt.CompletionRequest{
 		Model:     gpt.GPT3Ada,
@@ -66,7 +76,7 @@ func GetOpenAISession() (*gpt.Client, error) {
 	defer cancel()
 	_, err := client.CreateCompletion(requestCtx, request)
 	if err != nil {
-		return nil, errors.Wrap(err, "OpenAPI client failed warmup request")
+		return nil, fmt.Errorf("openAPI client failed warmup request: %w", err)
 	}
 
 	return client, nil

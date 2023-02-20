@@ -3,6 +3,8 @@ package bot
 import (
 	"context"
 	"fmt"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	"os"
 
 	"github.com/avast/retry-go"
@@ -65,6 +67,8 @@ func userWasMentioned(user *discordgo.User, mentioned []*discordgo.User) bool {
 }
 
 func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(context.Background(), "messageCreate")
+	defer span.End()
 	if m.Author.ID == s.State.User.ID {
 		return
 	}
@@ -85,7 +89,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	var responseText string
 	err := retry.Do(
 		func() error {
-			response, err := b.openapiClient.CreateCompletion(context.Background(), request)
+			response, err := b.openapiClient.CreateCompletion(ctx, request)
 			if err != nil {
 				b.logger.Error("Failed to retrieve completion from OpenAI", zap.Error(err))
 				return err
@@ -100,6 +104,8 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		retry.Attempts(3),
 	)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		_, discordErr := b.discordSession.ChannelMessageSend(m.ChannelID, "Whoops something went wrong processing that")
 		if discordErr != nil {
 			b.logger.Error("Failed to notify discord channel of the error", zap.Error(err))
