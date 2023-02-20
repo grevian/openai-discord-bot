@@ -52,7 +52,6 @@ func GetDiscordSession() (*discordgo.Session, error) {
 		return nil, err
 	}
 	discordSession.Client.Transport = otelhttp.NewTransport(http.DefaultTransport)
-
 	return discordSession, nil
 }
 
