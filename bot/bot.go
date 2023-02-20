@@ -9,6 +9,8 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/pkg/errors"
 	gpt "github.com/sashabaranov/go-gpt3"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 )
 
@@ -73,11 +75,14 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		return
 	}
 
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(context.Background(), "messageCreate")
+	defer span.End()
+
 	b.logger.Info("Processing Message", zap.String("message", m.Content))
 
 	request := gpt.CompletionRequest{
 		Model:       gpt.GPT3TextDavinci003,
-		Prompt:      fmt.Sprintf("%s \n %s", b.basePrompt, m.Content),
+		Prompt:      fmt.Sprintf("%s \n %s \nDanbot:", b.basePrompt, m.Content),
 		MaxTokens:   500,
 		Temperature: 0.6,
 	}
@@ -85,7 +90,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	var responseText string
 	err := retry.Do(
 		func() error {
-			response, err := b.openapiClient.CreateCompletion(context.Background(), request)
+			response, err := b.openapiClient.CreateCompletion(ctx, request)
 			if err != nil {
 				b.logger.Error("Failed to retrieve completion from OpenAI", zap.Error(err))
 				return err
@@ -100,17 +105,20 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		retry.Attempts(3),
 	)
 	if err != nil {
-		_, discordErr := b.discordSession.ChannelMessageSend(m.ChannelID, "Whoops something went wrong processing that")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		_, discordErr := b.discordSession.ChannelMessageSend(m.ChannelID, "Whoops something went wrong processing that", discordgo.WithContext(ctx))
 		if discordErr != nil {
 			b.logger.Error("Failed to notify discord channel of the error", zap.Error(err))
 		}
 		return
 	}
 
-	_, err = b.discordSession.ChannelMessageSend(m.ChannelID, responseText)
+	_, err = b.discordSession.ChannelMessageSend(m.ChannelID, responseText, discordgo.WithContext(ctx))
 	if err != nil {
 		b.logger.Error("Failed to respond to discord channel", zap.Error(err))
 	}
+	span.SetStatus(codes.Ok, "Success")
 }
 
 func (b *AIBot) ReadyHandler(session *discordgo.Session, ready *discordgo.Ready) {
