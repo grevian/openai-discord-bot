@@ -66,7 +66,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		return
 	}
 
-	if !b.userWasMentioned(m.Content) {
+	if !b.wasMentioned(m.Content) {
 		return
 	}
 
