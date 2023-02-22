@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 
 	"github.com/avast/retry-go"
 	"github.com/bwmarrin/discordgo"
@@ -20,6 +21,7 @@ type AIBot struct {
 	botCtx         context.Context
 	discordSession *discordgo.Session
 	basePrompt     string
+	mentionRegex   *regexp.Regexp
 }
 
 func (b *AIBot) Go() error {
@@ -37,12 +39,15 @@ func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *disc
 		logger.Panic("Failed to read initial prompt", zap.Error(err))
 	}
 
+	mentionRegex := regexp.MustCompile(fmt.Sprintf("<@&?%s>", discordSession.State.Application.ID))
+	
 	bot := &AIBot{
 		discordSession: discordSession,
 		logger:         logger,
 		openapiClient:  aiClient,
 		botCtx:         botCtx,
 		basePrompt:     string(promptBytes),
+		mentionRegex: 	mentionRegex,
 	}
 
 	// TODO Wire up more handlers
@@ -52,18 +57,8 @@ func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *disc
 	return bot
 }
 
-func userWasMentioned(user *discordgo.User, mentioned []*discordgo.User) bool {
-	if user == nil {
-		return false
-	}
-
-	for u := range mentioned {
-		if user.ID == mentioned[u].ID {
-			return true
-		}
-	}
-
-	return false
+func (b *AIBot) wasMentioned(message string) bool {
+	return b.mentionRegex.MatchString(message)
 }
 
 func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -71,7 +66,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		return
 	}
 
-	if !userWasMentioned(s.State.User, m.Mentions) {
+	if !b.userWasMentioned(m.Content) {
 		return
 	}
 
