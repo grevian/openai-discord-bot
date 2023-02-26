@@ -28,7 +28,7 @@ func main() {
 		log.Fatal("Failed to instantiate OpenAPI client", zap.Error(err))
 	}
 
-	botInstance := bot.NewAIBot(serviceCtx, openapiClient, discordSession, log)
+	botInstance := bot.NewAIBot(serviceCtx, openapiClient, discordSession, config.GetStorage(), log)
 
 	log.Info("Starting bot")
 	err = botInstance.Go()
