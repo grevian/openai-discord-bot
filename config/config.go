@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"openai-discord-bot/bot/storage"
 	"os"
 	"time"
 
@@ -15,13 +14,18 @@ import (
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+	"openai-discord-bot/bot/storage"
 )
 
 var logger *zap.Logger
 var awscfg aws.Config
 
 func Configure(serviceCtx context.Context) {
+	viper.SetDefault("JSON_LOGS", true)
+	viper.SetDefault("TRACING", true)
 	viper.SetEnvPrefix("BOT")
 	viper.AutomaticEnv()
 
@@ -39,10 +43,21 @@ func Configure(serviceCtx context.Context) {
 		panic(err)
 	}
 
-	logger.Info("Configuring tracing")
-	tracingErr := configureTracing(serviceCtx, logger)
-	if tracingErr != nil {
-		logger.Error("failed to initialize tracer", zap.Error(tracingErr))
+	configValues := viper.AllSettings()
+	configFields := make([]zap.Field, 0, len(configValues))
+	for k, v := range configValues {
+		configFields = append(configFields, zap.Any(k, v))
+	}
+	logger.Debug("Configuration Loaded", configFields...)
+
+	if viper.GetBool("TRACING") {
+		logger.Info("Configuring tracing")
+		tracingErr := configureTracing(serviceCtx, logger)
+		if tracingErr != nil {
+			logger.Error("failed to initialize tracer", zap.Error(tracingErr))
+		}
+	} else {
+		otel.SetTracerProvider(trace.NewNoopTracerProvider())
 	}
 
 	logger.Info("Configuring AWS Session")

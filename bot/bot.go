@@ -102,27 +102,37 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		}, discordgo.WithContext(ctx))
 		if err != nil {
 			b.logger.Error("Failed to create discord conversation thread", zap.Error(err))
+			span.RecordError(err)
 		}
 		responseChannel = ch.ID
 		isThreaded = true
 	}
 
 	// If we are in a thread, we should load the thread's conversation context
-	threadPromptContext, err := b.storage.GetThread(ctx, responseChannel)
-	if err != nil {
-		// This doesn't have to be fatal, though it may be confusing
-		b.logger.Error("Failed to load thread conversation context", zap.Error(err), zap.String("thread_id", responseChannel))
+	var threadPromptContext string
+	if isThreaded {
+		var err error
+		threadPromptContext, err = b.storage.GetThread(ctx, responseChannel)
+		if err != nil {
+			// This doesn't have to be fatal, though it may be confusing
+			b.logger.Error("Failed to load thread conversation context", zap.Error(err), zap.String("thread_id", responseChannel))
+			span.RecordError(err)
+		}
 	}
+
+	// Strip our UserId out of messages to keep the record from being too confusing,
+	messageText := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
+	b.logger.Info("Stripping out user id", zap.String("user_id", s.State.User.ID))
 
 	request := gpt.CompletionRequest{
 		Model:       gpt.GPT3TextDavinci003,
-		Prompt:      fmt.Sprintf("%s \n%s \n%s \nDanbot:", b.basePrompt, threadPromptContext, m.Content),
+		Prompt:      fmt.Sprintf("%s \n%s \n%s \nDanbot:", b.basePrompt, threadPromptContext, messageText),
 		MaxTokens:   500,
 		Temperature: 0.6,
 	}
 
 	var responseText string
-	err = retry.Do(
+	err := retry.Do(
 		func() error {
 			response, err := b.openapiClient.CreateCompletion(ctx, request)
 			if err != nil {
@@ -148,21 +158,21 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		return
 	}
 
-	// If we're in a thread, record the new prompt text and the response, to continue the context for the next message
-	if isThreaded {
-		err = b.storage.AddThreadMessage(ctx, responseChannel, "User: "+m.Content)
-		if err != nil {
-			b.logger.Error("Failed to record conversation message", zap.Error(err), zap.String("source", "message"))
-		}
-		err = b.storage.AddThreadMessage(ctx, responseChannel, "Danbot: "+responseText)
-		if err != nil {
-			b.logger.Error("Failed to record conversation message", zap.Error(err), zap.String("source", "openai"))
-		}
+	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+messageText)
+	if err != nil {
+		b.logger.Error("Failed to record conversation message", zap.Error(err), zap.String("source", "message"))
+		span.RecordError(err)
+	}
+	err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", "Danbot: "+responseText)
+	if err != nil {
+		b.logger.Error("Failed to record conversation message", zap.Error(err), zap.String("source", "openai"))
+		span.RecordError(err)
 	}
 
 	_, err = b.discordSession.ChannelMessageSend(responseChannel, responseText, discordgo.WithContext(ctx))
 	if err != nil {
 		b.logger.Error("Failed to respond to discord channel", zap.Error(err))
+		span.RecordError(err)
 	}
 	span.SetStatus(codes.Ok, "Success")
 }

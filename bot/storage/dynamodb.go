@@ -20,6 +20,7 @@ type Storage struct {
 type threadMessage struct {
 	ThreadId        string `dynamodbav:"thread_id"`
 	MessageUnixTime int64  `dynamodbav:"message_unix_time"`
+	MessageSource   string `dynamodbav:"message_source,omitempty"`
 	Message         string
 }
 
@@ -49,6 +50,9 @@ func (s *Storage) GetThread(ctx context.Context, threadId string) (string, error
 		KeyConditionExpression:    expr.KeyCondition(),
 		Limit:                     aws.Int32(100),
 	})
+	if err != nil {
+		return "", err
+	}
 
 	// Unmarshal the results into a list
 	var threadMessages []threadMessage
@@ -65,10 +69,11 @@ func (s *Storage) GetThread(ctx context.Context, threadId string) (string, error
 	return thread.String(), nil
 }
 
-func (s *Storage) AddThreadMessage(ctx context.Context, threadId string, message string) error {
+func (s *Storage) AddThreadMessage(ctx context.Context, threadId string, messageSource string, message string) error {
 	messageRecord := &threadMessage{
 		ThreadId:        threadId,
 		MessageUnixTime: time.Now().UnixMilli(),
+		MessageSource:   messageSource,
 		Message:         message,
 	}
 	item, err := attributevalue.MarshalMap(messageRecord)

@@ -25,6 +25,7 @@ exec: true     # Enable running commands in your container.
 #
 variables:                    # Pass environment variables as key value pairs.
   BOT_JSON_LOGS: true
+  BOT_TRACING: true
 
 secrets:
   BOT_DISCORD_TOKEN: "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/bot_discord_token"

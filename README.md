@@ -2,6 +2,20 @@
 
 This is a silly discord to openai bot designed to amuse myself and my friends
 
+## Running Locally
+
+It's probably easiest to run this via the Dockerfile, just remember to set the 
+necessary environment variables on startup 
+
+```
+docker build -t openaibot . && docker run --rm -it openaibot \
+ -e BOT_TRACING=false \ 
+ -e BOT_JSON_LOGS=false \
+ -e BOT_OPENAI_AUTH_TOKEN=<redacted> \
+ -e BOT_DISCORD_TOKEN=<redacted> \
+ -e AI_DISCORD_BOT_CONVERSATIONS_NAME=<dynamodb_table_name>
+```
+
 ## Deployment
 
 This bot uses the unfortunately named [AWS Copilot](https://aws.github.io/copilot-cli/docs/overview/) framework to deploy a simple docker service to ECS
