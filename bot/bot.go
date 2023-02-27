@@ -122,7 +122,9 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	// Strip our UserId out of messages to keep the record from being too confusing,
 	messageText := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
-	b.logger.Info("Stripping out user id", zap.String("user_id", s.State.User.ID))
+
+	// Let users know we're "typing", the call to OpenAI can take a few seconds
+	_ = s.ChannelTyping(responseChannel)
 
 	request := gpt.CompletionRequest{
 		Model:       gpt.GPT3TextDavinci003,
