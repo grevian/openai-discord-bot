@@ -97,7 +97,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	// If the user requested a thread but we're not in one yet, create it
 	if wantThreaded && !isThreaded {
 		ch, err := s.MessageThreadStartComplex(m.ChannelID, m.ID, &discordgo.ThreadStart{
-			Name:                fmt.Sprintf("Conversation with %s", m.Message.Author),
+			Name:                fmt.Sprintf("Conversation with %s", m.Message.Author.Username),
 			AutoArchiveDuration: 60,
 		}, discordgo.WithContext(ctx))
 		if err != nil {
