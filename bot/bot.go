@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -21,7 +22,7 @@ type AIBot struct {
 	openapiClient  *gpt.Client
 	botCtx         context.Context
 	discordSession *discordgo.Session
-	basePrompt     string
+	basePrompt     []gpt.ChatCompletionMessage
 	storage        *storage.Storage
 }
 
@@ -35,9 +36,18 @@ func (b *AIBot) Go() error {
 }
 
 func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *discordgo.Session, storage *storage.Storage, logger *zap.Logger) *AIBot {
-	promptBytes, err := os.ReadFile("prompts/danbo.txt")
+	promptBytes, err := os.ReadFile("prompts/danbo.json")
 	if err != nil {
 		logger.Panic("Failed to read initial prompt", zap.Error(err))
+	}
+
+	promptMessages := struct {
+		Prompt []gpt.ChatCompletionMessage
+	}{}
+	err = json.Unmarshal(promptBytes, &promptMessages)
+
+	if err != nil {
+		logger.Panic("Failed to parse initial prompt", zap.Error(err))
 	}
 
 	bot := &AIBot{
@@ -45,7 +55,7 @@ func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *disc
 		logger:         logger,
 		openapiClient:  aiClient,
 		botCtx:         botCtx,
-		basePrompt:     string(promptBytes),
+		basePrompt:     promptMessages.Prompt,
 		storage:        storage,
 	}
 
@@ -109,7 +119,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	}
 
 	// If we are in a thread, we should load the thread's conversation context
-	var threadPromptContext string
+	var threadPromptContext []gpt.ChatCompletionMessage
 	if isThreaded {
 		var err error
 		threadPromptContext, err = b.storage.GetThread(ctx, responseChannel)
@@ -120,28 +130,30 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		}
 	}
 
-	// Strip our UserId out of messages to keep the record from being too confusing,
-	messageText := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
+	userMessage := gpt.ChatCompletionMessage{
+		Role: "user",
+		// Strip our UserId out of messages to keep the record from being too confusing,
+		Content: strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), ""),
+	}
+	requestMessages := append(threadPromptContext, userMessage)
 
 	// Let users know we're "typing", the call to OpenAI can take a few seconds
 	_ = s.ChannelTyping(responseChannel)
 
-	request := gpt.CompletionRequest{
-		Model:       gpt.GPT3TextDavinci003,
-		Prompt:      fmt.Sprintf("%s \n%s \n%s \nDanbot:", b.basePrompt, threadPromptContext, messageText),
-		MaxTokens:   500,
-		Temperature: 0.6,
+	request := gpt.ChatCompletionRequest{
+		Model:    gpt.GPT3Dot5Turbo,
+		Messages: append(b.basePrompt, requestMessages...),
 	}
 
 	var responseText string
 	err := retry.Do(
 		func() error {
-			response, err := b.openapiClient.CreateCompletion(ctx, request)
+			response, err := b.openapiClient.CreateChatCompletion(ctx, request)
 			if err != nil {
 				b.logger.Error("Failed to retrieve completion from OpenAI", zap.Error(err))
 				return err
 			}
-			responseText = response.Choices[0].Text
+			responseText = response.Choices[0].Message.Content
 			if responseText == "" {
 				b.logger.Warn("Empty response text from OpenAI", zap.Reflect("response", response))
 				return errors.New("Received an empty response from OpenAI")
@@ -160,7 +172,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		return
 	}
 
-	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+messageText)
+	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+userMessage.Content)
 	if err != nil {
 		b.logger.Error("Failed to record conversation message", zap.Error(err), zap.String("source", "message"))
 		span.RecordError(err)

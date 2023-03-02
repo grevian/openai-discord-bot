@@ -2,7 +2,7 @@ package storage
 
 import (
 	"context"
-	"strings"
+	gpt "github.com/sashabaranov/go-gpt3"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -32,7 +32,8 @@ func NewStorage(cfg aws.Config) *Storage {
 	}
 }
 
-func (s *Storage) GetThread(ctx context.Context, threadId string) (string, error) {
+func (s *Storage) GetThread(ctx context.Context, threadId string) ([]gpt.ChatCompletionMessage, error) {
+	var responseMessages []gpt.ChatCompletionMessage
 	// Construct our query and run it
 	keyEx := expression.KeyAnd(
 		expression.Key("thread_id").Equal(expression.Value(threadId)),                               // PK
@@ -40,7 +41,7 @@ func (s *Storage) GetThread(ctx context.Context, threadId string) (string, error
 	)
 	expr, err := expression.NewBuilder().WithKeyCondition(keyEx).Build()
 	if err != nil {
-		return "", err
+		return responseMessages, err
 	}
 
 	q, err := s.client.Query(ctx, &dynamodb.QueryInput{
@@ -51,22 +52,29 @@ func (s *Storage) GetThread(ctx context.Context, threadId string) (string, error
 		Limit:                     aws.Int32(100),
 	})
 	if err != nil {
-		return "", err
+		return responseMessages, err
 	}
 
 	// Unmarshal the results into a list
 	var threadMessages []threadMessage
 	err = attributevalue.UnmarshalListOfMaps(q.Items, &threadMessages)
 	if err != nil {
-		return "", err
+		return responseMessages, err
 	}
 
 	// Concatenate the list of messages together and return them
-	thread := strings.Builder{}
 	for t := range threadMessages {
-		thread.WriteString(threadMessages[t].Message)
+		message := gpt.ChatCompletionMessage{
+			Content: threadMessages[t].Message,
+		}
+		if threadMessages[t].MessageSource == "Bot" {
+			message.Role = "assistant"
+		} else {
+			message.Role = "user"
+		}
+		responseMessages = append(responseMessages, message)
 	}
-	return thread.String(), nil
+	return responseMessages, nil
 }
 
 func (s *Storage) AddThreadMessage(ctx context.Context, threadId string, messageSource string, message string) error {

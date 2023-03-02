@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.18.5
 	github.com/bwmarrin/discordgo v0.27.0
 	github.com/pkg/errors v0.9.1
-	github.com/sashabaranov/go-gpt3 v1.1.1
+	github.com/sashabaranov/go-gpt3 v1.3.0
 	github.com/spf13/viper v1.15.0
 	go.opentelemetry.io/contrib/detectors/aws/ec2 v1.14.0
 	go.opentelemetry.io/contrib/detectors/aws/ecs v1.14.0

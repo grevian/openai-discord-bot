@@ -101,10 +101,12 @@ func GetOpenAISession() (*gpt.Client, error) {
 	if authToken == "" {
 		return nil, fmt.Errorf("no authToken is present in configuration")
 	}
-	client := gpt.NewClient(authToken)
-	client.HTTPClient = &http.Client{
+
+	openaiCfg := gpt.DefaultConfig(authToken)
+	openaiCfg.HTTPClient = &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
+	client := gpt.NewClientWithConfig(openaiCfg)
 
 	request := gpt.CompletionRequest{
 		Model:     gpt.GPT3Ada,
