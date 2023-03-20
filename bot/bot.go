@@ -10,7 +10,7 @@ import (
 	"github.com/avast/retry-go"
 	"github.com/bwmarrin/discordgo"
 	"github.com/pkg/errors"
-	gpt "github.com/sashabaranov/go-gpt3"
+	gpt "github.com/sashabaranov/go-openai"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"

@@ -2,13 +2,13 @@ package storage
 
 import (
 	"context"
-	gpt "github.com/sashabaranov/go-gpt3"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	gpt "github.com/sashabaranov/go-openai"
 	"github.com/spf13/viper"
 )
 
