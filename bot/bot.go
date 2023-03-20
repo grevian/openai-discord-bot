@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/avast/retry-go"
 	"github.com/bwmarrin/discordgo"
@@ -130,10 +131,58 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		}
 	}
 
+	// Strip our UserId out of messages to keep the record from being too confusing,
+	sanitizedUserPrompt := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
+
+	if strings.Contains(strings.ToLower(sanitizedUserPrompt), "draw me a picture of") {
+		imageRequest := gpt.ImageRequest{
+			Prompt:         sanitizedUserPrompt,
+			N:              1,
+			Size:           "512x512",
+			ResponseFormat: "url",
+			User:           m.Author.ID,
+		}
+
+		responseImage, err := b.openapiClient.CreateImage(ctx, imageRequest)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			_, discordErr := b.discordSession.ChannelMessageSend(responseChannel, "I fucked that up and threw it away. Sorry.", discordgo.WithContext(ctx))
+			if discordErr != nil {
+				b.logger.Error("Failed to notify discord channel of the error", zap.Error(err))
+			}
+			return
+		}
+
+		err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), sanitizedUserPrompt)
+		if err != nil {
+			b.logger.Error("Failed to record drawing prompt", zap.Error(err), zap.String("source", "message"))
+			span.RecordError(err)
+		}
+
+		_, err = b.discordSession.ChannelMessageSendEmbed(responseChannel, &discordgo.MessageEmbed{
+			URL:         responseImage.Data[0].URL,
+			Type:        discordgo.EmbedTypeImage,
+			Title:       "a picture I drawed",
+			Description: m.Content,
+			Timestamp:   time.Now().Format(time.RFC3339),
+			Image: &discordgo.MessageEmbedImage{
+				URL:    responseImage.Data[0].URL,
+				Width:  512,
+				Height: 512,
+			},
+		}, discordgo.WithContext(ctx))
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			b.logger.Error("Failed to send image to discord channel", zap.Error(err))
+			return
+		}
+	}
+
 	userMessage := gpt.ChatCompletionMessage{
-		Role: "user",
-		// Strip our UserId out of messages to keep the record from being too confusing,
-		Content: strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), ""),
+		Role:    "user",
+		Content: sanitizedUserPrompt,
 	}
 	requestMessages := append(threadPromptContext, userMessage)
 
