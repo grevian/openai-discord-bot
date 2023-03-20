@@ -178,6 +178,8 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			b.logger.Error("Failed to send image to discord channel", zap.Error(err))
 			return
 		}
+		span.SetStatus(codes.Ok, "Success")
+		return
 	}
 
 	userMessage := gpt.ChatCompletionMessage{
