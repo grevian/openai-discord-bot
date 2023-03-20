@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/avast/retry-go"
+	retry "github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
 	"github.com/pkg/errors"
 	gpt "github.com/sashabaranov/go-openai"
