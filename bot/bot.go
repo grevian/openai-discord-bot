@@ -177,7 +177,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		b.logger.Error("Failed to record conversation message", zap.Error(err), zap.String("source", "message"))
 		span.RecordError(err)
 	}
-	err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", "Danbot: "+responseText)
+	err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", responseText)
 	if err != nil {
 		b.logger.Error("Failed to record conversation message", zap.Error(err), zap.String("source", "openai"))
 		span.RecordError(err)
