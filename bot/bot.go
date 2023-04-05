@@ -112,7 +112,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	if strings.Contains(strings.ToLower(sanitizedUserPrompt), "draw me a picture of") {
 		// Strip the prompt prefix out of the message
 		sanitizedUserPrompt = strings.ReplaceAll(strings.ToLower(m.Content), "draw me a picture of", "")
-		err = b.handleImageMessage(ctx, responseChannel, sanitizedUserPrompt, m, s)
+		err = b.handleImageMessage(ctx, responseChannel, sanitizedUserPrompt, m)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -123,7 +123,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			return
 		}
 	} else {
-		err = b.handleCompletionPrompt(ctx, responseChannel, sanitizedUserPrompt, threadPromptContext, m, s)
+		err = b.handleCompletionPrompt(ctx, responseChannel, sanitizedUserPrompt, threadPromptContext, m)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -143,7 +143,7 @@ func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	b.logger.Info("Ready!")
 }
 
-func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, m *discordgo.MessageCreate, s *discordgo.Session) error {
+func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, m *discordgo.MessageCreate) error {
 	var err error
 
 	// Record the prompt to our thread context
@@ -192,7 +192,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 }
 
 // Handle a text completion prompt, including applying existing thread context and updating the stored state of that context
-func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel string, sanitizedUserPrompt string, threadPromptContext []gpt.ChatCompletionMessage, m *discordgo.MessageCreate, s *discordgo.Session) error {
+func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel string, sanitizedUserPrompt string, threadPromptContext []gpt.ChatCompletionMessage, m *discordgo.MessageCreate) error {
 	var err error
 
 	userMessage := gpt.ChatCompletionMessage{
