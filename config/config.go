@@ -26,6 +26,7 @@ var awscfg aws.Config
 func Configure(serviceCtx context.Context) {
 	viper.SetDefault("JSON_LOGS", true)
 	viper.SetDefault("TRACING", true)
+	viper.SetDefault("OPENAIDISCORDBOTIMAGES_NAME", "")
 	viper.SetEnvPrefix("BOT")
 	viper.AutomaticEnv()
 
@@ -75,6 +76,10 @@ func GetAWSConfig() aws.Config {
 
 func GetStorage() *storage.Storage {
 	return storage.NewStorage(GetAWSConfig())
+}
+
+func GetImageStorage() string {
+	return viper.GetString("OPENAIDISCORDBOTIMAGES_NAME")
 }
 
 func GetLogger() *zap.Logger {
