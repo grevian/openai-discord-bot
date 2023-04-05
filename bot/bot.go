@@ -135,6 +135,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	sanitizedUserPrompt := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
 
 	if strings.Contains(strings.ToLower(sanitizedUserPrompt), "draw me a picture of") {
+		sanitizedUserPrompt = strings.ReplaceAll(strings.ToLower(m.Content), "draw me a picture of", "")
 		imageRequest := gpt.ImageRequest{
 			Prompt:         sanitizedUserPrompt,
 			N:              1,
@@ -178,6 +179,12 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			b.logger.Error("Failed to send image to discord channel", zap.Error(err))
 			return
 		}
+		err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", responseImage.Data[0].URL)
+		if err != nil {
+			b.logger.Error("Failed to record conversation message", zap.Error(err), zap.String("source", "openai"))
+			span.RecordError(err)
+		}
+
 		span.SetStatus(codes.Ok, "Success")
 		return
 	}
