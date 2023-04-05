@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	retry "github.com/avast/retry-go/v4"
+	"github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
 	"github.com/pkg/errors"
 	gpt "github.com/sashabaranov/go-openai"
@@ -105,7 +105,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		responseChannel = ch.ID
 	}
 
-	// If the user requested a thread but we're not in one yet, create it
+	// If the user requested a thread, but we're not in one yet, create it
 	if wantThreaded && !isThreaded {
 		ch, err := s.MessageThreadStartComplex(m.ChannelID, m.ID, &discordgo.ThreadStart{
 			Name:                fmt.Sprintf("Conversation with %s", m.Message.Author.Username),
@@ -249,7 +249,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	span.SetStatus(codes.Ok, "Success")
 }
 
-func (b *AIBot) ReadyHandler(session *discordgo.Session, ready *discordgo.Ready) {
+func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	b.logger.Info("Connection state ready, Registering intents")
 
 	b.logger.Info("Ready!")
