@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.17.7
 	github.com/aws/aws-sdk-go-v2/config v1.18.19
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.10.19
-	github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression v1.4.45
+	github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression v1.4.46
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.19.2
 	github.com/bwmarrin/discordgo v0.27.1
 	github.com/pkg/errors v0.9.1
