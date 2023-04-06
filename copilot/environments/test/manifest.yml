@@ -19,3 +19,10 @@ type: Environment
 # Configure observability for your environment resources.
 observability:
   container_insights: true
+
+cdn:
+  certificate: arn:aws:acm:ca-central-1:537108148763:certificate/39621dd8-2943-4c30-b2f8-66640bdcd80d
+  static_assets:
+    location: openai-discord-bot-test-openaidiscordbotimagesbu-vpl7igisgpmc.s3.ca-central-1.amazonaws.com
+    alias: sillybullshit.click
+    path: static/*
