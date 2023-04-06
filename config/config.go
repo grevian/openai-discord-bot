@@ -78,8 +78,8 @@ func GetStorage() *storage.Storage {
 	return storage.NewStorage(GetAWSConfig())
 }
 
-func GetImageStorage() string {
-	return viper.GetString("OPENAIDISCORDBOTIMAGES_NAME")
+func GetImageStorage() *storage.ImageStorage {
+	return storage.NewImageStorage(GetAWSConfig(), GetLogger(), viper.GetString("OPENAIDISCORDBOTIMAGES_NAME"))
 }
 
 func GetLogger() *zap.Logger {

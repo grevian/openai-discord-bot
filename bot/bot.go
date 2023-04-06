@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
 	"github.com/pkg/errors"
@@ -11,10 +15,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
+
 	"openai-discord-bot/bot/storage"
-	"os"
-	"strings"
-	"time"
 )
 
 type AIBot struct {
@@ -24,6 +26,7 @@ type AIBot struct {
 	discordSession *discordgo.Session
 	basePrompt     []gpt.ChatCompletionMessage
 	storage        *storage.Storage
+	imageStorage   *storage.ImageStorage
 }
 
 func (b *AIBot) Go() error {
@@ -35,7 +38,7 @@ func (b *AIBot) Go() error {
 	return nil
 }
 
-func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *discordgo.Session, storage *storage.Storage, logger *zap.Logger) *AIBot {
+func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *discordgo.Session, storage *storage.Storage, imageStorage *storage.ImageStorage, logger *zap.Logger) *AIBot {
 	promptBytes, err := os.ReadFile("prompts/danbo.json")
 	if err != nil {
 		logger.Panic("Failed to read initial prompt", zap.Error(err))
@@ -57,6 +60,7 @@ func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *disc
 		botCtx:         botCtx,
 		basePrompt:     promptMessages.Prompt,
 		storage:        storage,
+		imageStorage:   imageStorage,
 	}
 
 	// TODO Wire up more handlers
@@ -165,6 +169,13 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return fmt.Errorf("failed to get image from openai: %w", err)
 	}
 
+	// Retrieve the image from openai and store it ourselves on S3
+	imageKey, err := b.imageStorage.StoreImageFromURL(ctx, m.GuildID, responseImage.Data[0].URL)
+	if err != nil {
+		return fmt.Errorf("failed to store retrieved image: %w", err)
+	}
+	imageUrl := fmt.Sprintf("https://sillybullshit.click/%s", imageKey)
+
 	// Record the image response to the thread context
 	err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", responseImage.Data[0].URL)
 	if err != nil {
@@ -173,13 +184,13 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 
 	// Embed the image in a discord response, and send it
 	_, err = b.discordSession.ChannelMessageSendEmbed(responseChannel, &discordgo.MessageEmbed{
-		URL:         responseImage.Data[0].URL,
+		URL:         imageUrl,
 		Type:        discordgo.EmbedTypeImage,
 		Title:       "a picture I drawed",
 		Description: m.Content,
 		Timestamp:   time.Now().Format(time.RFC3339),
 		Image: &discordgo.MessageEmbedImage{
-			URL:    responseImage.Data[0].URL,
+			URL:    imageUrl,
 			Width:  512,
 			Height: 512,
 		},
