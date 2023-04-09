@@ -10,6 +10,7 @@ jobs:
   build:
     environment: production
     runs-on: ubuntu-latest
+    concurrency: production
 
     steps:
       - uses: actions/checkout@v3
