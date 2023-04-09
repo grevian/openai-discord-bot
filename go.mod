@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.31.1
 	github.com/bwmarrin/discordgo v0.27.1
 	github.com/pkg/errors v0.9.1
-	github.com/sashabaranov/go-openai v1.6.1
+	github.com/sashabaranov/go-openai v1.7.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/viper v1.15.0
 	go.opentelemetry.io/contrib/detectors/aws/ec2 v1.15.0
