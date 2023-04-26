@@ -9,7 +9,6 @@ updates:
       - dependency-name: "github.com/aws/aws-sdk-go-v2/*"
         update-types: ["version-update:semver-patch"]
     labels:
-      - "go"
       - "dependencies"
     reviewers:
       - "grevian"
