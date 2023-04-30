@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
@@ -106,6 +106,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		span.RecordError(err)
 		return
 	}
+	b.logger.Debug("loaded thread context", zap.Int("thread_length", len(threadPromptContext)))
 
 	// Strip our UserId out of messages to keep the record from being too confusing,
 	sanitizedUserPrompt := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
@@ -113,7 +114,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	// Let users know we're "typing", the call to OpenAI can take a few seconds
 	_ = s.ChannelTyping(responseChannel)
 
-	if strings.Contains(strings.ToLower(sanitizedUserPrompt), "draw me a picture of") {
+	if strings.Contains(strings.ToLower(sanitizedUserPrompt), "🎨") || strings.Contains(strings.ToLower(sanitizedUserPrompt), "draw me a picture of") {
 		// Strip the prompt prefix out of the message
 		sanitizedUserPrompt = strings.ReplaceAll(strings.ToLower(m.Content), "draw me a picture of", "")
 		err = b.handleImageMessage(ctx, responseChannel, sanitizedUserPrompt, m)
@@ -169,32 +170,59 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return fmt.Errorf("failed to get image from openai: %w", err)
 	}
 
-	// Retrieve the image from openai and store it ourselves on S3
-	imageKey, err := b.imageStorage.StoreImageFromURL(ctx, m.GuildID, responseImage.Data[0].URL)
+	// Retrieve the image from openai
+	imageReader, imageLength, err := b.imageStorage.GetImageFromURL(ctx, responseImage.Data[0].URL)
 	if err != nil {
 		return fmt.Errorf("failed to store retrieved image: %w", err)
 	}
-	imageUrl := fmt.Sprintf("https://sillybullshit.click/%s", imageKey)
+	b.logger.Debug("image retrieval", zap.Int64("image_length", imageLength), zap.String("url", responseImage.Data[0].URL))
 
-	// Record the image response to the thread context
-	err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", responseImage.Data[0].URL)
-	if err != nil {
-		return fmt.Errorf("failed to record response to thread context: %w", err)
-	}
+	defer func() {
+		closeErr := imageReader.Close()
+		if closeErr != nil {
+			b.logger.Error("failed to close image request body", zap.Error(closeErr))
+		}
+	}()
 
-	// Embed the image in a discord response, and send it
-	_, err = b.discordSession.ChannelMessageSendEmbed(responseChannel, &discordgo.MessageEmbed{
-		URL:         imageUrl,
-		Type:        discordgo.EmbedTypeImage,
-		Title:       "a picture I drawed",
-		Description: m.Content,
-		Timestamp:   time.Now().Format(time.RFC3339),
-		Image: &discordgo.MessageEmbedImage{
-			URL:    imageUrl,
-			Width:  512,
-			Height: 512,
+	// Tee the image reading stream, so that we can upload it to discord and S3 at the same time
+	pipeReader, pipeWriter := io.Pipe()
+	imageTeeReader := io.TeeReader(imageReader, pipeWriter)
+
+	// Record the image to S3, and our thread context
+	go func() {
+		defer func() {
+			pipeErr := pipeWriter.Close()
+			if pipeErr != nil {
+				b.logger.Error("failed to close the pipeWriter", zap.Error(pipeErr))
+			}
+		}()
+
+		imageKey, err := b.imageStorage.StoreImage(ctx, m.GuildID, imageTeeReader, imageLength)
+		if err != nil {
+			b.logger.Error("failed to store a copy of the image in S3", zap.Error(err))
+			return
+		}
+
+		imageUrl := fmt.Sprintf("https://sillybullshit.click/%s", imageKey)
+
+		// Record the image response to the thread context
+		err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", imageUrl)
+		if err != nil {
+			b.logger.Error("failed to store a copy of the image in S3", zap.Error(err))
+		}
+	}()
+
+	// Embed the image in a discord message, and send it
+	_, err = b.discordSession.ChannelMessageSendComplex(responseChannel, &discordgo.MessageSend{
+		Content:   "a picture I drawed",
+		Reference: m.Reference(),
+		File: &discordgo.File{
+			Name:        "danbot-drawing.png",
+			ContentType: "image/png",
+			Reader:      pipeReader,
 		},
 	}, discordgo.WithContext(ctx))
+
 	if err != nil {
 		return fmt.Errorf("failed to send embedded image to discord: %w", err)
 	}

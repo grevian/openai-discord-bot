@@ -32,29 +32,22 @@ func NewImageStorage(config aws.Config, logger *zap.Logger, bucketName string) *
 	}
 }
 
-func (i *ImageStorage) StoreImageFromURL(ctx context.Context, groupId string, URL string) (string, error) {
+func (i *ImageStorage) GetImageFromURL(ctx context.Context, URL string) (io.ReadCloser, int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, URL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create image request: %w", err)
+		return nil, 0, fmt.Errorf("failed to create image request: %w", err)
 	}
 
 	resp, err := i.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to request image from URL: %w", err)
+		return nil, 0, fmt.Errorf("failed to request image from URL: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected response status: %d", resp.StatusCode)
+		return nil, 0, fmt.Errorf("unexpected response status: %d", resp.StatusCode)
 	}
 
-	defer func() {
-		err = resp.Body.Close()
-		if err != nil {
-			i.logger.Warn("failed to close image response body", zap.Error(err))
-		}
-	}()
-
-	return i.StoreImage(ctx, groupId, resp.Body, resp.ContentLength)
+	return resp.Body, resp.ContentLength, nil
 }
 
 func (i *ImageStorage) StoreImage(ctx context.Context, groupId string, reader io.Reader, contentLength int64) (string, error) {
@@ -70,8 +63,8 @@ func (i *ImageStorage) StoreImage(ctx context.Context, groupId string, reader io
 	_, err = i.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(i.bucketName),
 		Key:           constructedKey,
-		ContentLength: contentLength,
 		Body:          reader,
+		ContentLength: contentLength,
 		ContentType:   aws.String("image/png"),
 	})
 
