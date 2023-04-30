@@ -1,10 +1,13 @@
 FROM golang:1.19-alpine AS build
 
-COPY . /app
-
 WORKDIR /app
 
+COPY ./go.mod ./go.mod
+COPY ./go.sum ./go.sum
+
 RUN go mod download
+
+COPY . /app
 
 RUN go build -o /service-bin
 
