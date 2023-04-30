@@ -3,8 +3,8 @@ module openai-discord-bot
 go 1.19
 
 require (
-	github.com/avast/retry-go/v4 v4.3.3
-	github.com/aws/aws-sdk-go-v2 v1.17.7
+	github.com/avast/retry-go/v4 v4.3.4
+	github.com/aws/aws-sdk-go-v2 v1.18.0
 	github.com/aws/aws-sdk-go-v2/config v1.18.19
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.10.19
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression v1.4.46
@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.31.1
 	github.com/bwmarrin/discordgo v0.27.1
 	github.com/pkg/errors v0.9.1
-	github.com/sashabaranov/go-openai v1.6.1
+	github.com/sashabaranov/go-openai v1.9.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/viper v1.15.0
 	go.opentelemetry.io/contrib/detectors/aws/ec2 v1.15.0
