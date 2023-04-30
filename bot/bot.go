@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"strings"
+
 	"github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
 	"github.com/pkg/errors"
@@ -11,10 +15,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
-	"io"
+
 	"openai-discord-bot/bot/storage"
-	"os"
-	"strings"
 )
 
 type AIBot struct {
@@ -104,7 +106,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		span.RecordError(err)
 		return
 	}
-	b.logger.Info("loaded thread context", zap.Int("thread_length", len(threadPromptContext)))
+	b.logger.Debug("loaded thread context", zap.Int("thread_length", len(threadPromptContext)))
 
 	// Strip our UserId out of messages to keep the record from being too confusing,
 	sanitizedUserPrompt := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
@@ -173,7 +175,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	if err != nil {
 		return fmt.Errorf("failed to store retrieved image: %w", err)
 	}
-	b.logger.Info("image retrieval", zap.Int64("image_length", imageLength), zap.String("url", responseImage.Data[0].URL))
+	b.logger.Debug("image retrieval", zap.Int64("image_length", imageLength), zap.String("url", responseImage.Data[0].URL))
 
 	defer func() {
 		closeErr := imageReader.Close()
@@ -186,7 +188,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	pipeReader, pipeWriter := io.Pipe()
 	imageTeeReader := io.TeeReader(imageReader, pipeWriter)
 
-	// Record the image to S3
+	// Record the image to S3, and our thread context
 	go func() {
 		defer func() {
 			pipeErr := pipeWriter.Close()
@@ -224,7 +226,6 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	if err != nil {
 		return fmt.Errorf("failed to send embedded image to discord: %w", err)
 	}
-	b.logger.Info("sent image response")
 
 	return nil
 }

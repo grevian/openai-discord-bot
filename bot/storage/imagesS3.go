@@ -50,7 +50,7 @@ func (i *ImageStorage) GetImageFromURL(ctx context.Context, URL string) (io.Read
 	return resp.Body, resp.ContentLength, nil
 }
 
-func (i *ImageStorage) StoreImage(ctx context.Context, groupId string, reader io.Reader, len int64) (string, error) {
+func (i *ImageStorage) StoreImage(ctx context.Context, groupId string, reader io.Reader, contentLength int64) (string, error) {
 	uid, err := ksuid.NewRandomWithTime(time.Now())
 	if err != nil {
 		return "", fmt.Errorf("somehow failed to generate a uid: %w", err)
@@ -64,7 +64,7 @@ func (i *ImageStorage) StoreImage(ctx context.Context, groupId string, reader io
 		Bucket:        aws.String(i.bucketName),
 		Key:           constructedKey,
 		Body:          reader,
-		ContentLength: len,
+		ContentLength: contentLength,
 		ContentType:   aws.String("image/png"),
 	})
 
