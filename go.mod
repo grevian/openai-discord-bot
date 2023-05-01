@@ -15,7 +15,7 @@ require (
 	github.com/sashabaranov/go-openai v1.9.1
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/viper v1.15.0
-	go.opentelemetry.io/contrib/detectors/aws/ec2 v1.15.0
+	go.opentelemetry.io/contrib/detectors/aws/ec2 v1.16.0
 	go.opentelemetry.io/contrib/detectors/aws/ecs v1.16.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.40.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.40.0
@@ -29,7 +29,7 @@ require (
 )
 
 require (
-	github.com/aws/aws-sdk-go v1.44.224 // indirect
+	github.com/aws/aws-sdk-go v1.44.248 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.4.10 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.18 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.13.1 // indirect
