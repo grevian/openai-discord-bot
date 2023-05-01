@@ -16,7 +16,7 @@ require (
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/viper v1.15.0
 	go.opentelemetry.io/contrib/detectors/aws/ec2 v1.15.0
-	go.opentelemetry.io/contrib/detectors/aws/ecs v1.15.0
+	go.opentelemetry.io/contrib/detectors/aws/ecs v1.16.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.40.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.40.0
 	go.opentelemetry.io/contrib/propagators/aws v1.15.0
