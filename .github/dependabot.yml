@@ -5,6 +5,13 @@ updates:
     open-pull-requests-limit: 10
     schedule:
       interval: "monthly"
+    groups:
+      go.opentelemetry.io:
+        patterns:
+          - "go.opentelemetry.io*"
+      aws:
+        patterns:
+          - "aws*"
     ignore:
       - dependency-name: "github.com/aws/aws-sdk-go-v2/*"
         update-types: ["version-update:semver-patch"]
