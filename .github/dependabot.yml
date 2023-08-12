@@ -14,7 +14,7 @@ updates:
           - "aws*"
     ignore:
       - dependency-name: "github.com/aws/aws-sdk-go-v2/*"
-        update-types: ["version-update:semver-minor"]
+        update-types: ["version-update:semver-patch"]
     labels:
       - "dependencies"
     reviewers:
