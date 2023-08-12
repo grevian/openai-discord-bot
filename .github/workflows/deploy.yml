@@ -24,7 +24,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           role-duration-seconds: 1200
 
-      - uses: ksivamuthu/aws-copilot-github-action@v0.0.4
+      - uses: ksivamuthu/aws-copilot-github-action@v0.0.5
         with:
           command: deploy
           app: openai-discord-bot
