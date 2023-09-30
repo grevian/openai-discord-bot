@@ -29,4 +29,5 @@ jobs:
           command: deploy
           app: openai-discord-bot
           env: test # Test is prod, on this one...
-          force: false # optional
+          force: true
+          version: v1.29.1 # Workaround for https://github.com/ksivamuthu/aws-copilot-github-action/issues/194
