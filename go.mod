@@ -3,7 +3,7 @@ module openai-discord-bot
 go 1.19
 
 require (
-	github.com/avast/retry-go/v4 v4.5.0
+	github.com/avast/retry-go/v4 v4.5.1
 	github.com/aws/aws-sdk-go-v2 v1.21.0
 	github.com/aws/aws-sdk-go-v2/config v1.18.42
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.10.40
