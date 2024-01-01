@@ -16,11 +16,21 @@ func main() {
 	config.Configure(serviceCtx)
 	log := config.GetLogger()
 
-	log.Info("connecting to Discord")
+	log.Info("Creating discord client")
 	discordSession, err := config.GetDiscordSession()
 	if err != nil {
 		log.Fatal("Failed to instantiate Discord client", zap.Error(err))
 	}
+	err = discordSession.Open()
+	if err != nil {
+		log.Fatal("Failed to connect to Discord", zap.Error(err))
+	}
+	defer func() {
+		err = discordSession.Close()
+		if err != nil {
+			log.Error("Error closing Discord connection", zap.Error(err))
+		}
+	}()
 
 	log.Info("connecting to OpenAI")
 	openapiClient, err := config.GetOpenAISession()
@@ -42,10 +52,7 @@ func main() {
 	cancel()
 
 	log.Info("Gracefully shutting down")
-	err = discordSession.Close()
-	if err != nil {
-		log.Error("Error closing discord session", zap.Error(err))
-	}
+	botInstance.Shutdown()
 
 	// Give anything flushing from the system context, a few seconds to finish up
 	time.Sleep(time.Second * 5)

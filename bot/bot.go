@@ -31,10 +31,6 @@ type AIBot struct {
 
 func (b *AIBot) Go() error {
 	// TODO Block here? Use a context or a control channel?
-	err := b.discordSession.Open()
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -330,4 +326,9 @@ func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *di
 		}
 	}
 	return
+}
+
+func (b *AIBot) Shutdown() {
+	b.discordSession.ChannelMessageSend("", "Here I go, shutting down again!")
+
 }
