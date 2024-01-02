@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -47,7 +48,7 @@ func main() {
 	}
 
 	stop := make(chan os.Signal)
-	signal.Notify(stop, os.Interrupt)
+	signal.Notify(stop, syscall.SIGTERM)
 	<-stop
 
 	log.Info("Gracefully shutting down")
