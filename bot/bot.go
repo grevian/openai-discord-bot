@@ -13,6 +13,7 @@ import (
 	"github.com/pkg/errors"
 	gpt "github.com/sashabaranov/go-openai"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
@@ -90,6 +91,11 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	}
 
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(context.Background(), "messageCreate")
+	span.SetAttributes(
+		attribute.String("user", m.Author.ID),
+		attribute.String("guild", m.GuildID),
+		attribute.String("channel", m.ChannelID),
+	)
 	defer span.End()
 
 	b.logger.Info("Processing Message", zap.String("message", m.Content))
@@ -108,7 +114,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	sanitizedUserPrompt := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
 
 	// Let users know we're "typing", the call to OpenAI can take a few seconds
-	_ = s.ChannelTyping(responseChannel)
+	_ = s.ChannelTyping(responseChannel, discordgo.WithContext(ctx))
 
 	if strings.Contains(strings.ToLower(sanitizedUserPrompt), "🎨") || strings.Contains(strings.ToLower(sanitizedUserPrompt), "draw me a picture of") {
 		// Strip the prompt prefix out of the message
