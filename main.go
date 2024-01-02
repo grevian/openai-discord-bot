@@ -48,7 +48,7 @@ func main() {
 	}
 
 	stop := make(chan os.Signal)
-	signal.Notify(stop, syscall.SIGTERM)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
 	log.Info("Gracefully shutting down")
@@ -58,5 +58,5 @@ func main() {
 
 	// Give anything flushing from the system context, a few seconds to finish up
 	time.Sleep(time.Second * 5)
-	log.Sync()
+	_ = log.Sync()
 }
