@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"openai-discord-bot/bot/storage"
@@ -125,6 +126,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			span.SetStatus(codes.Error, err.Error())
 			_, discordErr := b.discordSession.ChannelMessageSend(responseChannel, fmt.Sprintf("I fucked that up and threw it away. Sorry. (%s)", err.Error()), discordgo.WithContext(ctx))
 			if discordErr != nil {
+				span.RecordError(err)
 				b.logger.Error("Failed to notify discord channel of the error", zap.Error(err))
 			}
 			return
@@ -136,6 +138,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			span.SetStatus(codes.Error, err.Error())
 			_, discordErr := b.discordSession.ChannelMessageSend(responseChannel, "Whoops something went wrong processing that", discordgo.WithContext(ctx))
 			if discordErr != nil {
+				span.RecordError(err)
 				b.logger.Error("Failed to notify discord channel of the error", zap.Error(err))
 			}
 			return
@@ -153,6 +156,9 @@ func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, m *discordgo.MessageCreate) error {
 	var err error
 
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageMessage")
+	defer span.End()
+
 	// Record the prompt to our thread context
 	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), prompt)
 	if err != nil {
@@ -163,13 +169,15 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	imageRequest := gpt.ImageRequest{
 		Prompt:         prompt,
 		N:              1,
-		Size:           "512x512",
-		ResponseFormat: "url",
 		User:           m.Author.ID,
 		Size:           gpt.CreateImageSize1024x1024,
 		ResponseFormat: gpt.CreateImageResponseFormatURL,
 		Model:          gpt.CreateImageModelDallE3,
 	}
+	span.SetAttributes(
+		attribute.String("model", imageRequest.Model),
+		attribute.String("size", imageRequest.Size),
+	)
 	responseImage, err := b.openapiClient.CreateImage(ctx, imageRequest)
 	if err != nil {
 		return fmt.Errorf("failed to get image from openai: %w", err)
@@ -185,6 +193,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	defer func() {
 		closeErr := imageReader.Close()
 		if closeErr != nil {
+			span.RecordError(err)
 			b.logger.Error("failed to close image request body", zap.Error(closeErr))
 		}
 	}()
@@ -198,12 +207,14 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		defer func() {
 			pipeErr := pipeWriter.Close()
 			if pipeErr != nil {
+				span.RecordError(err)
 				b.logger.Error("failed to close the pipeWriter", zap.Error(pipeErr))
 			}
 		}()
 
 		imageKey, err := b.imageStorage.StoreImage(ctx, m.GuildID, imageTeeReader, imageLength)
 		if err != nil {
+			span.RecordError(err)
 			b.logger.Error("failed to store a copy of the image in S3", zap.Error(err))
 			return
 		}
@@ -213,6 +224,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		// Record the image response to the thread context
 		err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", imageUrl)
 		if err != nil {
+			span.RecordError(err)
 			b.logger.Error("failed to store a copy of the image in S3", zap.Error(err))
 		}
 	}()
@@ -232,12 +244,15 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return fmt.Errorf("failed to send embedded image to discord: %w", err)
 	}
 
+	span.SetStatus(codes.Ok, "Success")
 	return nil
 }
 
 // Handle a text completion prompt, including applying existing thread context and updating the stored state of that context
 func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel string, sanitizedUserPrompt string, threadPromptContext []gpt.ChatCompletionMessage, m *discordgo.MessageCreate) error {
 	var err error
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleCompletionPrompt")
+	defer span.End()
 
 	userMessage := gpt.ChatCompletionMessage{
 		Role:    "user",
@@ -267,6 +282,10 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 			return nil
 		},
 		retry.Attempts(3),
+		retry.OnRetry(func(n uint, err error) {
+			span.AddEvent("retry creating chat completion", trace.WithAttributes(attribute.Int("retry", int(n))))
+			span.RecordError(err)
+		}),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to get response from openai: %w", err)
@@ -275,17 +294,15 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	// TODO It's weird that we're modifying the stored thread state here, but loaded it elsewhere
 	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+userMessage.Content)
 	if err != nil {
-		// TODO Return this error, or inject the tracing span, to ensure its surfaced in the span
-		// TODO Record the messageSource too
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
+		span.RecordError(warnErr)
 		b.logger.Warn("non-fatal error updating thread context", zap.Error(warnErr))
 	}
 
 	err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", responseText)
 	if err != nil {
-		// TODO Return this error, or inject the tracing span, to ensure its surfaced in the span
-		// TODO Record the messageSource too
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
+		span.RecordError(warnErr)
 		b.logger.Warn("non-fatal error updating thread context", zap.Error(warnErr))
 	}
 
@@ -294,6 +311,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 		return fmt.Errorf("failed to respond to discord channel: %w", err)
 	}
 
+	span.SetStatus(codes.Ok, "Success")
 	return nil
 }
 
@@ -338,6 +356,8 @@ func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *di
 }
 
 func (b *AIBot) Shutdown() {
-	b.discordSession.ChannelMessageSend("", "Here I go, shutting down again!")
-
+	_, err := b.discordSession.ChannelMessageSend("1091532074495787049", "Here I go, shutting down again!")
+	_, span := otel.GetTracerProvider().Tracer("AIBot").Start(b.botCtx, "Shutdown")
+	span.RecordError(err)
+	span.End()
 }
