@@ -49,10 +49,11 @@ func main() {
 	stop := make(chan os.Signal)
 	signal.Notify(stop, os.Interrupt)
 	<-stop
-	cancel()
 
 	log.Info("Gracefully shutting down")
 	botInstance.Shutdown()
+	time.Sleep(time.Second * 1)
+	cancel()
 
 	// Give anything flushing from the system context, a few seconds to finish up
 	time.Sleep(time.Second * 5)
