@@ -166,6 +166,9 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		Size:           "512x512",
 		ResponseFormat: "url",
 		User:           m.Author.ID,
+		Size:           gpt.CreateImageSize1024x1024,
+		ResponseFormat: gpt.CreateImageResponseFormatURL,
+		Model:          gpt.CreateImageModelDallE3,
 	}
 	responseImage, err := b.openapiClient.CreateImage(ctx, imageRequest)
 	if err != nil {
