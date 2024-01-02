@@ -1,0 +1,43 @@
+receivers:
+  awsxray:
+    transport: udp
+  awsecscontainermetrics:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  otlp/traces:
+    endpoint: api.honeycomb.io:443
+    headers:
+      x-honeycomb-team: SET_HONEYCOMB_API_KEY_HERE
+  otlp/containermetrics:
+    endpoint: api.honeycomb.io:443
+    headers:
+      x-honeycomb-team: SET_HONEYCOMB_API_KEY_HERE
+  otlp/metrics:
+    endpoint: api.honeycomb.io:443
+    headers:
+      x-honeycomb-team: SET_HONEYCOMB_API_KEY_HERE
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/traces]
+    metrics/container:
+      receivers: [awsecscontainermetrics]
+      processors: [batch]
+      exporters: [otlp/containermetrics]
+    metrics/application:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/metrics]
+

@@ -27,13 +27,17 @@ variables:                    # Pass environment variables as key value pairs.
   BOT_JSON_LOGS: true
   BOT_TRACING: true
   BOT_OPENAIDISCORDBOTIMAGES_NAME: openai-discord-bot-test-openaidiscordbotimagesbu-20x5frjd8d9
+  OTEL_SERVICE_NAME: danbot
 
 secrets:
   BOT_DISCORD_TOKEN: "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/bot_discord_token"
   BOT_OPENAI_AUTH_TOKEN: "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/bot_openai_token"
 
-observability:
-  tracing: awsxray
+sidecars:
+  otel_sidecar:
+    image: 'public.ecr.aws/aws-observability/aws-otel-collector:latest'
+    secrets:
+      AOT_CONFIG_CONTENT: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/otel_config
 
 # You can override any of the values defined above by environment.
 environments:

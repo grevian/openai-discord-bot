@@ -8,9 +8,9 @@ import (
 
 	"go.opentelemetry.io/contrib/detectors/aws/ec2"
 	"go.opentelemetry.io/contrib/detectors/aws/ecs"
-	"go.opentelemetry.io/contrib/propagators/aws/xray"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"google.golang.org/grpc"
 )
@@ -35,12 +35,11 @@ func configureTracing(serviceCtx context.Context, logger *zap.Logger) error {
 	traceProvider := trace.NewTracerProvider(
 		trace.WithSampler(trace.AlwaysSample()),
 		trace.WithBatcher(traceExporter),
-		trace.WithIDGenerator(xray.NewIDGenerator()), // Generate xray compatible trace IDs
 		trace.WithResource(ec2Resource),
 		trace.WithResource(ecsResource),
 	)
 	otel.SetTracerProvider(traceProvider)
-	otel.SetTextMapPropagator(xray.Propagator{})
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	// Use a context.Background here to allow us an extra few seconds to flush data once the
 	// service context itself does terminate

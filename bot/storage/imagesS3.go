@@ -64,7 +64,7 @@ func (i *ImageStorage) StoreImage(ctx context.Context, groupId string, reader io
 		Bucket:        aws.String(i.bucketName),
 		Key:           constructedKey,
 		Body:          reader,
-		ContentLength: contentLength,
+		ContentLength: &contentLength,
 		ContentType:   aws.String("image/png"),
 	})
 
