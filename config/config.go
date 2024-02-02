@@ -114,14 +114,14 @@ func GetOpenAISession() (*gpt.Client, error) {
 	client := gpt.NewClientWithConfig(openaiCfg)
 
 	request := gpt.CompletionRequest{
-		Model:     gpt.GPT3Ada,
+		Model:     gpt.GPT3Dot5TurboInstruct,
 		Prompt:    "are you alive?",
 		Suffix:    "",
 		MaxTokens: 5,
 	}
 	requestCtx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
-	_, err := client.CreateCompletion(requestCtx, request)
+	_, err := client.CreateChatCompletion(requestCtx, request)
 	if err != nil {
 		return nil, fmt.Errorf("openAPI client failed warmup request: %w", err)
 	}
