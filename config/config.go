@@ -114,7 +114,7 @@ func GetOpenAISession() (*gpt.Client, error) {
 	client := gpt.NewClientWithConfig(openaiCfg)
 
 	request := gpt.CompletionRequest{
-		Model:     gpt.GPT3Ada,
+		Model:     gpt.GPT3Dot5Turbo,
 		Prompt:    "are you alive?",
 		Suffix:    "",
 		MaxTokens: 5,
