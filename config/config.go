@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"
 	"openai-discord-bot/bot/storage"
 )
@@ -58,7 +58,7 @@ func Configure(serviceCtx context.Context) {
 			logger.Error("failed to initialize tracer", zap.Error(tracingErr))
 		}
 	} else {
-		otel.SetTracerProvider(trace.NewNoopTracerProvider())
+		otel.SetTracerProvider(noop.NewTracerProvider())
 	}
 
 	logger.Info("Configuring AWS Session")
