@@ -121,7 +121,7 @@ func GetOpenAISession() (*gpt.Client, error) {
 	}
 	requestCtx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
-	_, err := client.CreateChatCompletion(requestCtx, request)
+	_, err := client.CreateCompletion(requestCtx, request)
 	if err != nil {
 		return nil, fmt.Errorf("openAPI client failed warmup request: %w", err)
 	}
