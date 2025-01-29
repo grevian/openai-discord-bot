@@ -11,10 +11,13 @@ updates:
           - "go.opentelemetry.io*"
       aws:
         patterns:
-          - "aws*"
+          - "github.com/aws/aws-sdk-go-v2"
+          - "github.com/aws/aws-sdk-go-v2/*"
+        update-types:
+          - ["version-update:semver-minor"]
     ignore:
       - dependency-name: "github.com/aws/aws-sdk-go-v2/*"
-        update-types: ["version-update:semver-minor"]
+        update-types: ["version-update:semver-patch"]
     labels:
       - "dependencies"
     reviewers:
