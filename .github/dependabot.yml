@@ -13,7 +13,8 @@ updates:
         patterns:
           - "github.com/aws/aws-sdk-go-v2"
           - "github.com/aws/aws-sdk-go-v2/*"
-        update-types: "minor"
+        update-types:
+         - "minor"
     ignore:
       - dependency-name: "github.com/aws/aws-sdk-go-v2/*"
         update-types: ["version-update:semver-patch"]
