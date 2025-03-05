@@ -12,7 +12,10 @@ import (
 	"go.opentelemetry.io/contrib/detectors/aws/ecs"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
+	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
+	otellog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"google.golang.org/grpc"
 )
@@ -66,6 +69,16 @@ func configureLogging() error {
 	var err error
 	var logger *slog.Logger
 	if viper.GetBool("JSON_LOGS") {
+		// TODO Lots of warnings and caveats about using this in production, but I think since we're
+		//  logging via ECS -> Cloudwatch -> Firehouse -> Honeycomb it's the right thing to do, If we want to though,
+		//  we are running a collector sidecar and could log over it via otlp which is much better supported
+		exp, err := stdoutlog.New()
+		if err != nil {
+			return err
+		}
+		provider := otellog.NewLoggerProvider(otellog.WithProcessor(otellog.NewSimpleProcessor(exp)))
+		global.SetLoggerProvider(provider)
+
 		logger = otelslog.NewLogger("openai-discord-bot")
 	} else {
 		logger = slog.Default()
