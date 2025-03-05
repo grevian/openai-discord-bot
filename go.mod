@@ -1,7 +1,8 @@
 module openai-discord-bot
 
-go 1.21
-toolchain go1.22.5
+go 1.22.0
+
+toolchain go1.23.5
 
 require (
 	github.com/avast/retry-go/v4 v4.6.1
@@ -16,6 +17,7 @@ require (
 	github.com/sashabaranov/go-openai v1.38.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/viper v1.19.0
+	go.opentelemetry.io/contrib/bridges/otelslog v0.9.0
 	go.opentelemetry.io/contrib/detectors/aws/ec2 v1.34.0
 	go.opentelemetry.io/contrib/detectors/aws/ecs v1.34.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.59.0
@@ -72,6 +74,7 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.34.0 // indirect
+	go.opentelemetry.io/otel/log v0.10.0 // indirect
 	go.opentelemetry.io/otel/metric v1.34.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.5.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect

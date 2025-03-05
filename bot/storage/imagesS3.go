@@ -11,24 +11,21 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.uber.org/zap"
 )
 
 type ImageStorage struct {
 	client     *s3.Client
 	httpClient *http.Client
 	bucketName string
-	logger     *zap.Logger
 }
 
-func NewImageStorage(config aws.Config, logger *zap.Logger, bucketName string) *ImageStorage {
+func NewImageStorage(config aws.Config, bucketName string) *ImageStorage {
 	return &ImageStorage{
 		client: s3.NewFromConfig(config),
 		httpClient: &http.Client{
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
 		},
 		bucketName: bucketName,
-		logger:     logger,
 	}
 }
 

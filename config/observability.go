@@ -3,9 +3,11 @@ package config
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
+	"log/slog"
 	"time"
 
+	"github.com/spf13/viper"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/detectors/aws/ec2"
 	"go.opentelemetry.io/contrib/detectors/aws/ecs"
 	"go.opentelemetry.io/otel"
@@ -15,7 +17,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-func configureTracing(serviceCtx context.Context, logger *zap.Logger) error {
+func configureTracing(serviceCtx context.Context) error {
 	// Configure a traceExporter to write to a sidecar collector
 	traceExporter := otlptracegrpc.NewUnstarted(
 		otlptracegrpc.WithInsecure(),
@@ -54,8 +56,21 @@ func configureTracing(serviceCtx context.Context, logger *zap.Logger) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 		defer cancel()
 		err := traceExporter.Shutdown(shutdownCtx)
-		logger.Error("Failed to flush telemetry data", zap.Error(err))
+		slog.Default().ErrorContext(serviceCtx, "Failed to flush telemetry data", slog.Any("error", err))
 	}(serviceCtx)
 
 	return nil
+}
+
+func configureLogging() error {
+	var err error
+	var logger *slog.Logger
+	if viper.GetBool("JSON_LOGS") {
+		logger = otelslog.NewLogger("openai-discord-bot")
+	} else {
+		logger = slog.Default()
+	}
+	slog.SetDefault(logger)
+
+	return err
 }
