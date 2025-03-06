@@ -10,7 +10,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     if: ${{ github.actor == 'dependabot[bot]' }}
     steps:
       - name: Check out repository
@@ -31,3 +31,10 @@ jobs:
       - name: Run unit tests
         run: |
           go test -v ./...
+
+      # Not used by our current deployment, but we need to know this works before merging PRs
+      - name: Build and push docker image
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: grevian/openai-discord-bot:${{github.ref_name}}
