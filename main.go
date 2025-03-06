@@ -57,8 +57,10 @@ func main() {
 	logger.Info("Gracefully shutting down")
 	botInstance.Shutdown()
 	time.Sleep(time.Second * 1)
+
+	// Terminate the service context, which should flush any open logs/traces/etc.
 	cancel()
 
-	// Give anything flushing from the system context, a few seconds to finish up
+	// Give anything flushing from the system context, a few seconds to finish up, then exit
 	time.Sleep(time.Second * 5)
 }
