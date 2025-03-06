@@ -36,7 +36,7 @@ func init() {
 
 func Configure(serviceCtx context.Context) {
 	var err error
-	err = configureLogging()
+	err = configureLogging(serviceCtx)
 	if err != nil {
 		panic(err)
 	}
