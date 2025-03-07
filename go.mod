@@ -15,14 +15,14 @@ require (
 	github.com/sashabaranov/go-openai v1.38.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/viper v1.19.0
-	go.opentelemetry.io/contrib/bridges/otelslog v0.9.0
-	go.opentelemetry.io/contrib/detectors/aws/ec2 v1.34.0
-	go.opentelemetry.io/contrib/detectors/aws/ecs v1.34.0
-	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.59.0
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.59.0
+	go.opentelemetry.io/contrib/bridges/otelslog v0.10.0
+	go.opentelemetry.io/contrib/detectors/aws/ec2 v1.35.0
+	go.opentelemetry.io/contrib/detectors/aws/ecs v1.35.0
+	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.60.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.60.0
 	go.opentelemetry.io/otel v1.35.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.11.0
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.34.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.35.0
 	go.opentelemetry.io/otel/log v0.11.0
 	go.opentelemetry.io/otel/sdk v1.35.0
 	go.opentelemetry.io/otel/sdk/log v0.11.0
