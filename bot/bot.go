@@ -18,8 +18,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
-
 	"openai-discord-bot/bot/storage"
 )
 
@@ -351,7 +349,7 @@ func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *di
 		if err != nil {
 			// This doesn't have to be fatal, though it may be confusing
 			warnErr := fmt.Errorf("failed to load thread conversation context: %w", err)
-			logger.WarnContext(ctx, "Failed to load thread conversation context", slog.Any("error", warnErr), zap.String("thread_id", responseChannel))
+			logger.WarnContext(ctx, "Failed to load thread conversation context", slog.Any("error", warnErr), slog.String("thread_id", responseChannel))
 		}
 	}
 	return
