@@ -67,6 +67,8 @@ func configureTracing(serviceCtx context.Context) error {
 	return nil
 }
 
+var programLevel = new(slog.LevelVar)
+
 // configureLogging sets up the logging system for the service, either local text, local json, or otlp based opentelemetry logging,
 // through the slog package, based on configuration from viper settings and OTLP environment variables
 func configureLogging(serviceCtx context.Context) error {
@@ -103,9 +105,13 @@ func configureLogging(serviceCtx context.Context) error {
 			logger.ErrorContext(serviceCtx, "Failed to flush logging data", slog.Any("error", err))
 		}(serviceCtx)
 	} else if viper.GetBool("JSON_LOGS") {
-		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel}))
 	} else {
 		logger = slog.Default()
+	}
+
+	if viper.GetBool("DEBUG_LOGS") {
+		programLevel.Set(slog.LevelDebug)
 	}
 
 	slog.SetDefault(logger)

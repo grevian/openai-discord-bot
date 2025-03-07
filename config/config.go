@@ -23,6 +23,7 @@ import (
 var awscfg aws.Config
 
 func init() {
+	viper.SetDefault("DEBUG_LOGS", false)
 	viper.SetDefault("JSON_LOGS", true)
 	viper.SetDefault("TRACING", true)
 	viper.SetDefault("OPENAIDISCORDBOTIMAGES_NAME", "")
@@ -44,11 +45,14 @@ func Configure(serviceCtx context.Context) {
 	logger := slog.Default()
 
 	configValues := viper.AllSettings()
-	configFields := make([]slog.Attr, 0, len(configValues))
+	configFields := make([]any, 0, len(configValues))
 	for k, v := range configValues {
+		if k == "DISCORD_TOKEN" || k == "OPENAI_AUTH_TOKEN" {
+			v = "<REDACTED>"
+		}
 		configFields = append(configFields, slog.Any(k, v))
 	}
-	logger.DebugContext(serviceCtx, "Configuration Loaded", configFields)
+	logger.DebugContext(serviceCtx, "Configuration Loaded", configFields...)
 
 	if viper.GetBool("TRACING") {
 		logger.InfoContext(serviceCtx, "Configuring tracing")

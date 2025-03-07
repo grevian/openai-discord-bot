@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"go.uber.org/zap"
 	"openai-discord-bot/bot"
 	"openai-discord-bot/config"
 )
@@ -39,7 +38,7 @@ func main() {
 	logger.Info("connecting to OpenAI")
 	openapiClient, err := config.GetOpenAISession()
 	if err != nil {
-		log.Fatal("Failed to instantiate OpenAPI client", zap.Error(err))
+		log.Fatal("Failed to instantiate OpenAPI client", slog.Any("error", err))
 	}
 
 	botInstance := bot.NewAIBot(serviceCtx, openapiClient, discordSession, config.GetStorage(), config.GetImageStorage())
@@ -47,7 +46,7 @@ func main() {
 	logger.Info("Starting bot")
 	err = botInstance.Go()
 	if err != nil {
-		log.Fatal("Failed to run the bot!", zap.Error(err))
+		log.Fatal("Failed to run the bot!", slog.Any("error", err))
 	}
 
 	stop := make(chan os.Signal)
