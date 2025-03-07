@@ -31,6 +31,13 @@ jobs:
         run: |
           go test -v ./...
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Not used by our current deployment, but we need to know this works before merging PRs
       - name: Build and push docker image
         uses: docker/build-push-action@v6
