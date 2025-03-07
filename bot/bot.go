@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -22,7 +24,6 @@ import (
 )
 
 type AIBot struct {
-	logger         *zap.Logger
 	openapiClient  *gpt.Client
 	botCtx         context.Context
 	discordSession *discordgo.Session
@@ -36,10 +37,10 @@ func (b *AIBot) Go() error {
 	return nil
 }
 
-func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *discordgo.Session, storage *storage.Storage, imageStorage *storage.ImageStorage, logger *zap.Logger) *AIBot {
+func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *discordgo.Session, storage *storage.Storage, imageStorage *storage.ImageStorage) *AIBot {
 	promptBytes, err := os.ReadFile("prompts/danbo.json")
 	if err != nil {
-		logger.Panic("Failed to read initial prompt", zap.Error(err))
+		log.Panic("Failed to read initial prompt", err)
 	}
 
 	promptMessages := struct {
@@ -48,12 +49,11 @@ func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *disc
 	err = json.Unmarshal(promptBytes, &promptMessages)
 
 	if err != nil {
-		logger.Panic("Failed to parse initial prompt", zap.Error(err))
+		log.Panic("Failed to parse initial prompt", err)
 	}
 
 	bot := &AIBot{
 		discordSession: discordSession,
-		logger:         logger,
 		openapiClient:  aiClient,
 		botCtx:         botCtx,
 		basePrompt:     promptMessages.Prompt,
@@ -83,6 +83,7 @@ func userWasMentioned(user *discordgo.User, mentioned []*discordgo.User) bool {
 }
 
 func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+	logger := slog.Default().WithGroup("messageCreate")
 	if m.Author.ID == s.State.User.ID {
 		return
 	}
@@ -99,17 +100,17 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	)
 	defer span.End()
 
-	b.logger.Info("Processing Message", zap.String("message", m.Content))
+	logger.InfoContext(ctx, "Processing Message", slog.String("message", m.Content))
 
 	// Figure out if we should be acting in a thread
 	responseChannel, threadPromptContext, err := b.handleThreading(ctx, s, m)
 	if err != nil {
-		b.logger.Error("failed to load or create thread context", zap.Error(err))
+		logger.ErrorContext(ctx, "failed to load or create thread context", slog.Any("error", err))
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return
 	}
-	b.logger.Debug("loaded thread context", zap.Int("thread_length", len(threadPromptContext)))
+	logger.DebugContext(ctx, "loaded thread context", slog.Int("thread_length", len(threadPromptContext)))
 
 	// Strip our UserId out of messages to keep the record from being too confusing,
 	sanitizedUserPrompt := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
@@ -127,7 +128,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			_, discordErr := b.discordSession.ChannelMessageSend(responseChannel, fmt.Sprintf("I fucked that up and threw it away. Sorry. (%s)", err.Error()), discordgo.WithContext(ctx))
 			if discordErr != nil {
 				span.RecordError(err)
-				b.logger.Error("Failed to notify discord channel of the error", zap.Error(err))
+				logger.ErrorContext(ctx, "Failed to notify discord channel of the error", slog.Any("error", err))
 			}
 			return
 		}
@@ -139,7 +140,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			_, discordErr := b.discordSession.ChannelMessageSend(responseChannel, "Whoops something went wrong processing that", discordgo.WithContext(ctx))
 			if discordErr != nil {
 				span.RecordError(err)
-				b.logger.Error("Failed to notify discord channel of the error", zap.Error(err))
+				logger.ErrorContext(ctx, "Failed to notify discord channel of the error", slog.Any("error", err))
 			}
 			return
 		}
@@ -148,13 +149,12 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 }
 
 func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
-	b.logger.Info("Connection state ready, Registering intents")
-
-	b.logger.Info("Ready!")
+	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
 }
 
 func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, m *discordgo.MessageCreate) error {
 	var err error
+	logger := slog.Default().WithGroup("handleImageMessage")
 
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageMessage")
 	defer span.End()
@@ -188,13 +188,13 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	if err != nil {
 		return fmt.Errorf("failed to store retrieved image: %w", err)
 	}
-	b.logger.Debug("image retrieval", zap.Int64("image_length", imageLength), zap.String("url", responseImage.Data[0].URL))
+	logger.DebugContext(ctx, "image retrieval", slog.Int64("image_length", imageLength), slog.String("url", responseImage.Data[0].URL))
 
 	defer func() {
 		closeErr := imageReader.Close()
 		if closeErr != nil {
 			span.RecordError(err)
-			b.logger.Error("failed to close image request body", zap.Error(closeErr))
+			logger.ErrorContext(ctx, "failed to close image request body", slog.Any("error", closeErr))
 		}
 	}()
 
@@ -208,14 +208,14 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 			pipeErr := pipeWriter.Close()
 			if pipeErr != nil {
 				span.RecordError(err)
-				b.logger.Error("failed to close the pipeWriter", zap.Error(pipeErr))
+				logger.ErrorContext(ctx, "failed to close the pipeWriter", slog.Any("error", pipeErr))
 			}
 		}()
 
 		imageKey, err := b.imageStorage.StoreImage(ctx, m.GuildID, imageTeeReader, imageLength)
 		if err != nil {
 			span.RecordError(err)
-			b.logger.Error("failed to store a copy of the image in S3", zap.Error(err))
+			logger.ErrorContext(ctx, "failed to store a copy of the image in S3", slog.Any("error", err))
 			return
 		}
 
@@ -225,7 +225,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", imageUrl)
 		if err != nil {
 			span.RecordError(err)
-			b.logger.Error("failed to store a copy of the image in S3", zap.Error(err))
+			logger.ErrorContext(ctx, "failed to store a copy of the image in S3", slog.Any("error", err))
 		}
 	}()
 
@@ -251,6 +251,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 // Handle a text completion prompt, including applying existing thread context and updating the stored state of that context
 func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel string, sanitizedUserPrompt string, threadPromptContext []gpt.ChatCompletionMessage, m *discordgo.MessageCreate) error {
 	var err error
+	logger := slog.Default().WithGroup("handleCompletionPrompt")
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleCompletionPrompt")
 	defer span.End()
 
@@ -271,12 +272,12 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 		func() error {
 			response, err := b.openapiClient.CreateChatCompletion(ctx, request)
 			if err != nil {
-				b.logger.Error("Failed to retrieve completion from OpenAI", zap.Error(err))
+				logger.ErrorContext(ctx, "Failed to retrieve completion from OpenAI", slog.Any("error", err))
 				return err
 			}
 			responseText = response.Choices[0].Message.Content
 			if responseText == "" {
-				b.logger.Warn("Empty response text from OpenAI", zap.Reflect("response", response))
+				logger.WarnContext(ctx, "Empty response text from OpenAI", slog.Any("response", response))
 				return errors.New("Received an empty response from OpenAI")
 			}
 			return nil
@@ -296,14 +297,14 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	if err != nil {
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
 		span.RecordError(warnErr)
-		b.logger.Warn("non-fatal error updating thread context", zap.Error(warnErr))
+		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", warnErr))
 	}
 
 	err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", responseText)
 	if err != nil {
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
 		span.RecordError(warnErr)
-		b.logger.Warn("non-fatal error updating thread context", zap.Error(warnErr))
+		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", warnErr))
 	}
 
 	_, err = b.discordSession.ChannelMessageSend(responseChannel, responseText, discordgo.WithContext(ctx))
@@ -317,6 +318,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 
 // Create a new thread if requested, or load the context of a thread if already in one
 func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate) (responseChannel string, threadContext []gpt.ChatCompletionMessage, errResponse error) {
+	logger := slog.Default().WithGroup("handleThreading")
 	// Default to responding to the channel the message came from
 	responseChannel = m.ChannelID
 	isThreaded := false
@@ -349,7 +351,7 @@ func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *di
 		if err != nil {
 			// This doesn't have to be fatal, though it may be confusing
 			warnErr := fmt.Errorf("failed to load thread conversation context: %w", err)
-			b.logger.Warn("Failed to load thread conversation context", zap.Error(warnErr), zap.String("thread_id", responseChannel))
+			logger.WarnContext(ctx, "Failed to load thread conversation context", slog.Any("error", warnErr), zap.String("thread_id", responseChannel))
 		}
 	}
 	return

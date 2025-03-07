@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -16,14 +17,12 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
-	"go.uber.org/zap"
 	"openai-discord-bot/bot/storage"
 )
 
-var logger *zap.Logger
 var awscfg aws.Config
 
-func Configure(serviceCtx context.Context) {
+func init() {
 	viper.SetDefault("JSON_LOGS", true)
 	viper.SetDefault("TRACING", true)
 	viper.SetDefault("OPENAIDISCORDBOTIMAGES_NAME", "")
@@ -33,35 +32,35 @@ func Configure(serviceCtx context.Context) {
 	if conversationsTableName, ok := os.LookupEnv("AI_DISCORD_BOT_CONVERSATIONS_NAME"); ok {
 		viper.Set("CONVERSATION_TABLE", conversationsTableName)
 	}
+}
 
+func Configure(serviceCtx context.Context) {
 	var err error
-	if viper.GetBool("JSON_LOGS") {
-		logger, err = zap.NewProduction()
-	} else {
-		logger, err = zap.NewDevelopment()
-	}
+	err = configureLogging(serviceCtx)
 	if err != nil {
 		panic(err)
 	}
 
+	logger := slog.Default()
+
 	configValues := viper.AllSettings()
-	configFields := make([]zap.Field, 0, len(configValues))
+	configFields := make([]slog.Attr, 0, len(configValues))
 	for k, v := range configValues {
-		configFields = append(configFields, zap.Any(k, v))
+		configFields = append(configFields, slog.Any(k, v))
 	}
-	logger.Debug("Configuration Loaded", configFields...)
+	logger.DebugContext(serviceCtx, "Configuration Loaded", configFields)
 
 	if viper.GetBool("TRACING") {
-		logger.Info("Configuring tracing")
-		tracingErr := configureTracing(serviceCtx, logger)
+		logger.InfoContext(serviceCtx, "Configuring tracing")
+		tracingErr := configureTracing(serviceCtx)
 		if tracingErr != nil {
-			logger.Error("failed to initialize tracer", zap.Error(tracingErr))
+			logger.ErrorContext(serviceCtx, "failed to initialize tracer", slog.Any("error", tracingErr))
 		}
 	} else {
 		otel.SetTracerProvider(noop.NewTracerProvider())
 	}
 
-	logger.Info("Configuring AWS Session")
+	logger.InfoContext(serviceCtx, "Configuring AWS Session")
 	// TODO Can I remove the region? And should I be using the serviceCtx here?
 	awscfg, err = config.LoadDefaultConfig(context.Background(), config.WithRegion("ca-central-1"))
 	if err != nil {
@@ -79,11 +78,11 @@ func GetStorage() *storage.Storage {
 }
 
 func GetImageStorage() *storage.ImageStorage {
-	return storage.NewImageStorage(GetAWSConfig(), GetLogger(), viper.GetString("OPENAIDISCORDBOTIMAGES_NAME"))
+	return storage.NewImageStorage(GetAWSConfig(), viper.GetString("OPENAIDISCORDBOTIMAGES_NAME"))
 }
 
-func GetLogger() *zap.Logger {
-	return logger
+func GetLogger() *slog.Logger {
+	return slog.Default()
 }
 
 func GetDiscordSession() (*discordgo.Session, error) {
