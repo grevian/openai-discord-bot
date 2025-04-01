@@ -1,7 +1,6 @@
 module openai-discord-bot
 
 go 1.24.0
-
 require (
 	github.com/avast/retry-go/v4 v4.6.1
 	github.com/aws/aws-sdk-go-v2 v1.36.3
@@ -12,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.78.1
 	github.com/bwmarrin/discordgo v0.28.1
 	github.com/pkg/errors v0.9.1
-	github.com/sashabaranov/go-openai v1.38.0
+	github.com/sashabaranov/go-openai v1.38.1
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/viper v1.19.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.10.0
