@@ -21,8 +21,6 @@ updates:
         update-types: ["version-update:semver-patch"]
     labels:
       - "dependencies"
-    reviewers:
-      - "grevian"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
