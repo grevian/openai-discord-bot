@@ -8,6 +8,8 @@ import (
 	"os"
 	"time"
 
+	"openai-discord-bot/bot/storage"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/bwmarrin/discordgo"
@@ -17,7 +19,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
-	"openai-discord-bot/bot/storage"
 )
 
 var awscfg aws.Config
@@ -50,7 +51,7 @@ func Configure(serviceCtx context.Context) {
 		if k == "DISCORD_TOKEN" || k == "OPENAI_AUTH_TOKEN" {
 			v = "<REDACTED>"
 		}
-		configFields = append(configFields, slog.Any(k, v))
+		configFields = append(configFields, slog.Any("config."+k, v))
 	}
 	logger.DebugContext(serviceCtx, "Configuration Loaded", configFields...)
 

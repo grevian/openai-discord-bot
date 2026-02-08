@@ -28,7 +28,7 @@ func NewStorage(cfg aws.Config) *Storage {
 	svc := dynamodb.NewFromConfig(cfg)
 	return &Storage{
 		client:    svc,
-		tableName: viper.Get("CONVERSATION_TABLE").(string),
+		tableName: viper.GetString("CONVERSATION_TABLE"),
 	}
 }
 
@@ -63,11 +63,11 @@ func (s *Storage) GetThread(ctx context.Context, threadId string) ([]gpt.ChatCom
 	}
 
 	// Concatenate the list of messages together and return them
-	for t := range threadMessages {
+	for _, tm := range threadMessages {
 		message := gpt.ChatCompletionMessage{
-			Content: threadMessages[t].Message,
+			Content: tm.Message,
 		}
-		if threadMessages[t].MessageSource == "Bot" {
+		if tm.MessageSource == "Bot" {
 			message.Role = "assistant"
 		} else {
 			message.Role = "user"
