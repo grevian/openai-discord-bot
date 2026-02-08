@@ -8,7 +8,10 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
+
+	"openai-discord-bot/bot/storage"
 
 	"github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
@@ -18,7 +21,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"openai-discord-bot/bot/storage"
 )
 
 type AIBot struct {
@@ -70,14 +72,9 @@ func userWasMentioned(user *discordgo.User, mentioned []*discordgo.User) bool {
 	if user == nil {
 		return false
 	}
-
-	for u := range mentioned {
-		if user.ID == mentioned[u].ID {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(mentioned, func(u *discordgo.User) bool {
+		return user.ID == u.ID
+	})
 }
 
 func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -90,7 +87,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		return
 	}
 
-	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(context.Background(), "messageCreate")
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(b.botCtx, "messageCreate")
 	span.SetAttributes(
 		attribute.String("user", m.Author.ID),
 		attribute.String("guild", m.GuildID),
@@ -116,10 +113,11 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	// Let users know we're "typing", the call to OpenAI can take a few seconds
 	_ = s.ChannelTyping(responseChannel, discordgo.WithContext(ctx))
 
-	if strings.Contains(strings.ToLower(sanitizedUserPrompt), "🎨") || strings.Contains(strings.ToLower(sanitizedUserPrompt), "draw me a picture of") {
+	sanitizedLower := strings.ToLower(sanitizedUserPrompt)
+	if strings.Contains(sanitizedLower, "🎨") || strings.Contains(sanitizedLower, "draw me a picture of") {
 		// Strip the prompt prefix out of the message
-		sanitizedUserPrompt = strings.ReplaceAll(strings.ToLower(m.Content), "draw me a picture of", "")
-		err = b.handleImageMessage(ctx, responseChannel, sanitizedUserPrompt, m)
+		prompt := strings.TrimSpace(strings.ReplaceAll(sanitizedLower, "draw me a picture of", ""))
+		err = b.handleImageMessage(ctx, responseChannel, prompt, m)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
