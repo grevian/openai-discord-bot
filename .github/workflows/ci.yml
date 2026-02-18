@@ -36,7 +36,7 @@ jobs:
         env:
           OPENAI_AUTH_TOKEN: ${{ secrets.OPENAI_AUTH_TOKEN }}
         run: |
-          go test -v -run 'Test(?!Danbot)' ./...
+          go test -v -skip 'TestDanbot' ./...
 
       - name: Run eval tests (non-fatal)
         continue-on-error: true
