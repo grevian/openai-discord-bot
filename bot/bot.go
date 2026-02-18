@@ -114,10 +114,23 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	_ = s.ChannelTyping(responseChannel, discordgo.WithContext(ctx))
 
 	sanitizedLower := strings.ToLower(sanitizedUserPrompt)
-	if strings.Contains(sanitizedLower, "🎨") || strings.Contains(sanitizedLower, "draw me a picture of") {
+	if strings.Contains(sanitizedLower, "✏️") {
+		prompt := strings.TrimSpace(strings.ReplaceAll(sanitizedLower, "✏️", ""))
+		err = b.handleImageEditMessage(ctx, responseChannel, prompt, threadPromptContext, m)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			_, discordErr := b.discordSession.ChannelMessageSend(responseChannel, fmt.Sprintf("I fucked that up and threw it away. Sorry. (%s)", err.Error()), discordgo.WithContext(ctx))
+			if discordErr != nil {
+				span.RecordError(err)
+				logger.ErrorContext(ctx, "Failed to notify discord channel of the error", slog.Any("error", err))
+			}
+			return
+		}
+	} else if strings.Contains(sanitizedLower, "🎨") || strings.Contains(sanitizedLower, "draw me a picture of") {
 		// Strip the prompt prefix out of the message
 		prompt := strings.TrimSpace(strings.ReplaceAll(sanitizedLower, "draw me a picture of", ""))
-		err = b.handleImageMessage(ctx, responseChannel, prompt, m)
+		err = b.handleImageMessage(ctx, responseChannel, prompt, threadPromptContext, m)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -148,12 +161,19 @@ func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
 }
 
-func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, m *discordgo.MessageCreate) error {
+func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, threadPromptContext []gpt.ChatCompletionMessage, m *discordgo.MessageCreate) error {
 	var err error
 	logger := slog.Default().WithGroup("handleImageMessage")
 
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageMessage")
 	defer span.End()
+
+	// If we're in a thread, combine the original prompt with the new instructions
+	if len(threadPromptContext) > 0 {
+		if originalPrompt := findOriginalPrompt(threadPromptContext); originalPrompt != "" {
+			prompt = fmt.Sprintf("Original image prompt: %s. Modification: %s", originalPrompt, prompt)
+		}
+	}
 
 	// Record the prompt to our thread context
 	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), prompt)
@@ -351,6 +371,114 @@ func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *di
 		}
 	}
 	return
+}
+
+// findLastImageURL searches thread context messages for the most recent image URL
+func findLastImageURL(threadContext []gpt.ChatCompletionMessage) string {
+	for i := len(threadContext) - 1; i >= 0; i-- {
+		content := threadContext[i].Content
+		if strings.HasPrefix(content, "https://sillybullshit.click/") {
+			return content
+		}
+	}
+	return ""
+}
+
+// findOriginalPrompt returns the first user message from thread context (the original image prompt)
+func findOriginalPrompt(threadContext []gpt.ChatCompletionMessage) string {
+	for _, msg := range threadContext {
+		if msg.Role == "user" {
+			return msg.Content
+		}
+	}
+	return ""
+}
+
+func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel string, prompt string, threadPromptContext []gpt.ChatCompletionMessage, m *discordgo.MessageCreate) error {
+	logger := slog.Default().WithGroup("handleImageEditMessage")
+
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageEditMessage")
+	defer span.End()
+
+	// Find the most recent image URL from thread context
+	imageURL := findLastImageURL(threadPromptContext)
+	if imageURL == "" {
+		return fmt.Errorf("no image found in thread context to edit")
+	}
+
+	// Download the image
+	imageReader, _, err := b.imageStorage.GetImageFromURL(ctx, imageURL)
+	if err != nil {
+		return fmt.Errorf("failed to download image for editing: %w", err)
+	}
+	defer imageReader.Close()
+
+	// Record the prompt to our thread context
+	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), prompt)
+	if err != nil {
+		return fmt.Errorf("failed to record edit prompt: %w", err)
+	}
+
+	// Call DALL-E 2 edit API
+	editRequest := gpt.ImageEditRequest{
+		Image:          imageReader,
+		Prompt:         prompt,
+		N:              1,
+		Size:           gpt.CreateImageSize1024x1024,
+		ResponseFormat: gpt.CreateImageResponseFormatURL,
+	}
+
+	responseImage, err := b.openapiClient.CreateEditImage(ctx, editRequest)
+	if err != nil {
+		return fmt.Errorf("failed to edit image via openai: %w", err)
+	}
+
+	// Download the edited image from OpenAI
+	editedImageReader, editedImageLength, err := b.imageStorage.GetImageFromURL(ctx, responseImage.Data[0].URL)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve edited image: %w", err)
+	}
+	defer editedImageReader.Close()
+
+	logger.DebugContext(ctx, "edited image retrieval", slog.Int64("image_length", editedImageLength))
+
+	// Tee the image for Discord + S3
+	pipeReader, pipeWriter := io.Pipe()
+	imageTeeReader := io.TeeReader(editedImageReader, pipeWriter)
+
+	go func() {
+		defer pipeWriter.Close()
+
+		imageKey, storeErr := b.imageStorage.StoreImage(ctx, m.GuildID, imageTeeReader, editedImageLength)
+		if storeErr != nil {
+			span.RecordError(storeErr)
+			logger.ErrorContext(ctx, "failed to store edited image in S3", slog.Any("error", storeErr))
+			return
+		}
+
+		imageURL := fmt.Sprintf("https://sillybullshit.click/%s", imageKey)
+		threadErr := b.storage.AddThreadMessage(ctx, responseChannel, "Bot", imageURL)
+		if threadErr != nil {
+			span.RecordError(threadErr)
+			logger.ErrorContext(ctx, "failed to record edited image in thread context", slog.Any("error", threadErr))
+		}
+	}()
+
+	_, err = b.discordSession.ChannelMessageSendComplex(responseChannel, &discordgo.MessageSend{
+		Content:   "an edited picture I drawed",
+		Reference: m.Reference(),
+		File: &discordgo.File{
+			Name:        "danbot-drawing.png",
+			ContentType: "image/png",
+			Reader:      pipeReader,
+		},
+	}, discordgo.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("failed to send edited image to discord: %w", err)
+	}
+
+	span.SetStatus(codes.Ok, "Success")
+	return nil
 }
 
 func (b *AIBot) Shutdown() {
