@@ -70,7 +70,7 @@ func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *disc
 
 	bot := &AIBot{
 		discordSession: discordSession,
-		openapiClient:  aiClient,
+		openapiClient:  newOpenaiClientWrapper(aiClient),
 		botCtx:         botCtx,
 		basePrompt:     promptMessages.Prompt,
 		storage:        storage,
@@ -437,7 +437,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel stri
 
 	// Call DALL-E 2 edit API
 	editRequest := gpt.ImageEditRequest{
-		Image:          imageReader,
+		Image:          gpt.WrapReader(imageReader, "image.png", "image/png"),
 		Prompt:         prompt,
 		N:              1,
 		Size:           gpt.CreateImageSize1024x1024,
