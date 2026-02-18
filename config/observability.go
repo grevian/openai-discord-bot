@@ -26,14 +26,14 @@ var ecsResourceDetector = ecs.NewResourceDetector()
 func configureTracing(serviceCtx context.Context) error {
 	// Configure a traceExporter to write to a sidecar collector
 	traceExporter, err := otlptracegrpc.New(
-		context.Background(),
+		serviceCtx,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create new OTLP trace exporter: %w", err)
 	}
 
 	// Configure some resource detection to get data about our operating environment
-	detectionCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	detectionCtx, cancel := context.WithTimeout(serviceCtx, time.Second*10)
 	defer cancel()
 	ec2Resource, _ := ec2ResourceDetector.Detect(detectionCtx)
 	ecsResource, _ := ecsResourceDetector.Detect(detectionCtx)
@@ -75,13 +75,13 @@ func configureLogging(serviceCtx context.Context) error {
 	var err error
 	var logger *slog.Logger
 	if viper.GetBool("OTLP_LOGS") {
-		exp, err := otlploggrpc.New(context.Background())
+		exp, err := otlploggrpc.New(serviceCtx)
 		if err != nil {
 			return err
 		}
 
 		// Configure some resource detection to get data about our operating environment
-		detectionCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+		detectionCtx, cancel := context.WithTimeout(serviceCtx, time.Second*10)
 		defer cancel()
 		ec2Resource, _ := ec2ResourceDetector.Detect(detectionCtx)
 		ecsResource, _ := ecsResourceDetector.Detect(detectionCtx)
