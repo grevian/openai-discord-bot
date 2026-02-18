@@ -70,7 +70,7 @@ func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *disc
 
 	bot := &AIBot{
 		discordSession: discordSession,
-		openapiClient:  aiClient,
+		openapiClient:  newOpenaiClientWrapper(aiClient),
 		botCtx:         botCtx,
 		basePrompt:     promptMessages.Prompt,
 		storage:        storage,
