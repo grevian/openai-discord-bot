@@ -23,13 +23,29 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+type aiClient interface {
+	CreateImage(ctx context.Context, request gpt.ImageRequest) (gpt.ImageResponse, error)
+	CreateEditImage(ctx context.Context, request gpt.ImageEditRequest) (gpt.ImageResponse, error)
+	CreateChatCompletion(ctx context.Context, request gpt.ChatCompletionRequest) (gpt.ChatCompletionResponse, error)
+}
+
+type threadStore interface {
+	GetThread(ctx context.Context, threadId string) ([]gpt.ChatCompletionMessage, error)
+	AddThreadMessage(ctx context.Context, threadId string, messageSource string, message string) error
+}
+
+type imageStore interface {
+	GetImageFromURL(ctx context.Context, URL string) (io.ReadCloser, int64, error)
+	StoreImage(ctx context.Context, groupId string, reader io.Reader, contentLength int64) (string, error)
+}
+
 type AIBot struct {
-	openapiClient  *gpt.Client
+	openapiClient  aiClient
 	botCtx         context.Context
 	discordSession *discordgo.Session
 	basePrompt     []gpt.ChatCompletionMessage
-	storage        *storage.Storage
-	imageStorage   *storage.ImageStorage
+	storage        threadStore
+	imageStorage   imageStore
 }
 
 func (b *AIBot) Go() error {
