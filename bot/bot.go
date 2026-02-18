@@ -426,6 +426,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel stri
 		N:              1,
 		Size:           gpt.CreateImageSize1024x1024,
 		ResponseFormat: gpt.CreateImageResponseFormatURL,
+		Model:          gpt.CreateImageModelDallE2,
 	}
 
 	responseImage, err := b.openapiClient.CreateEditImage(ctx, editRequest)
