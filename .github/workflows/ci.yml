@@ -45,7 +45,7 @@ jobs:
 
       # Not used by our current deployment, but we need to know this works before merging PRs
       - name: Build and push docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/openai-discord-bot:${{github.sha}}
