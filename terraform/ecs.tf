@@ -85,10 +85,12 @@ resource "aws_ecs_task_definition" "service" {
       image     = "public.ecr.aws/aws-observability/aws-otel-collector:latest"
       essential = true
 
-      environment = []
+      environment = [
+        { name = "AOT_CONFIG_CONTENT", value = file("${path.module}/../adot/otel-agent-config.yaml") },
+      ]
 
       secrets = [
-        { name = "AOT_CONFIG_CONTENT", valueFrom = aws_ssm_parameter.otel_config.arn },
+        { name = "HONEYCOMB_API_KEY", valueFrom = aws_ssm_parameter.honeycomb_api_key.arn },
       ]
 
       mountPoints    = []
@@ -115,6 +117,7 @@ resource "aws_ecs_service" "main" {
   desired_count          = var.desired_count
   enable_execute_command = true
   propagate_tags         = "SERVICE"
+  wait_for_steady_state  = true
 
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"

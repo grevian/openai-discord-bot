@@ -13,8 +13,10 @@ RUN go build -o /service-bin
 
 FROM alpine
 
-ENV BOT_OPENAI_AUTH_TOKEN=""
-ENV BOT_DISCORD_TOKEN=""
+# Required at runtime (NOT baked into the image):
+#   BOT_DISCORD_TOKEN     - injected in ECS via terraform/ssm.tf -> aws_ssm_parameter.discord_token
+#   BOT_OPENAI_AUTH_TOKEN - injected in ECS via terraform/ssm.tf -> aws_ssm_parameter.openai_token
+# Locally, set these in your shell or a .env file consumed by your runner.
 
 WORKDIR /app
 COPY --from=build /service-bin .

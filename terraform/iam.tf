@@ -30,7 +30,7 @@ resource "aws_iam_role_policy" "execution_ssm" {
       Resource = [
         aws_ssm_parameter.discord_token.arn,
         aws_ssm_parameter.openai_token.arn,
-        aws_ssm_parameter.otel_config.arn,
+        aws_ssm_parameter.honeycomb_api_key.arn,
       ]
     }]
   })

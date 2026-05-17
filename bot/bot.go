@@ -3,16 +3,17 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 
 	"github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
-	"github.com/pkg/errors"
 	gpt "github.com/sashabaranov/go-openai"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -24,6 +25,7 @@ import (
 type AIBot struct {
 	openapiClient  *gpt.Client
 	botCtx         context.Context
+	shutdown       context.CancelFunc
 	discordSession *discordgo.Session
 	basePrompt     []gpt.ChatCompletionMessage
 	storage        *storage.Storage
@@ -35,7 +37,25 @@ func (b *AIBot) Go() error {
 	return nil
 }
 
-func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *discordgo.Session, storage *storage.Storage, imageStorage *storage.ImageStorage) *AIBot {
+// isFatalOpenAIError reports whether err indicates a condition that won't
+// recover on retry: an exhausted quota or a revoked / invalid API key. When
+// true the caller should stop calling OpenAI and trigger process shutdown so
+// that ECS does not pile up a crash-loop of half-open Discord sessions.
+func isFatalOpenAIError(err error) bool {
+	var apiErr *gpt.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.HTTPStatusCode == http.StatusUnauthorized {
+		return true
+	}
+	if code, ok := apiErr.Code.(string); ok {
+		return code == "insufficient_quota" || code == "invalid_api_key"
+	}
+	return false
+}
+
+func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient *gpt.Client, discordSession *discordgo.Session, storage *storage.Storage, imageStorage *storage.ImageStorage) *AIBot {
 	promptBytes, err := os.ReadFile("prompts/danbo.json")
 	if err != nil {
 		log.Panic("Failed to read initial prompt", err)
@@ -54,6 +74,7 @@ func NewAIBot(botCtx context.Context, aiClient *gpt.Client, discordSession *disc
 		discordSession: discordSession,
 		openapiClient:  aiClient,
 		botCtx:         botCtx,
+		shutdown:       shutdown,
 		basePrompt:     promptMessages.Prompt,
 		storage:        storage,
 		imageStorage:   imageStorage,
@@ -178,6 +199,9 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	)
 	responseImage, err := b.openapiClient.CreateImage(ctx, imageRequest)
 	if err != nil {
+		if isFatalOpenAIError(err) {
+			b.handleFatalOpenAIError(ctx, err)
+		}
 		return fmt.Errorf("failed to get image from openai: %w", err)
 	}
 
@@ -270,6 +294,10 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 		func() error {
 			response, err := b.openapiClient.CreateChatCompletion(ctx, request)
 			if err != nil {
+				if isFatalOpenAIError(err) {
+					b.handleFatalOpenAIError(ctx, err)
+					return retry.Unrecoverable(err)
+				}
 				logger.ErrorContext(ctx, "Failed to retrieve completion from OpenAI", slog.Any("error", err))
 				return err
 			}
@@ -353,6 +381,29 @@ func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *di
 		}
 	}
 	return
+}
+
+// handleFatalOpenAIError logs the terminal OpenAI failure with enough detail
+// to identify the cause in CloudWatch (quota vs revoked key), then triggers a
+// graceful process shutdown so main.go can close the Discord session cleanly.
+// Repeated calls are safe — context.CancelFunc is idempotent.
+func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
+	logger := slog.Default().WithGroup("openai")
+	var apiErr *gpt.APIError
+	attrs := []any{slog.Any("error", err)}
+	if errors.As(err, &apiErr) {
+		attrs = append(attrs,
+			slog.Int("http_status", apiErr.HTTPStatusCode),
+			slog.String("openai_message", apiErr.Message),
+		)
+		if code, ok := apiErr.Code.(string); ok {
+			attrs = append(attrs, slog.String("openai_error_code", code))
+		}
+	}
+	logger.ErrorContext(ctx, "Unrecoverable OpenAI error; triggering shutdown", attrs...)
+	if b.shutdown != nil {
+		b.shutdown()
+	}
 }
 
 func (b *AIBot) Shutdown() {

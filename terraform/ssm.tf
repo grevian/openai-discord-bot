@@ -20,9 +20,9 @@ resource "aws_ssm_parameter" "openai_token" {
   }
 }
 
-resource "aws_ssm_parameter" "otel_config" {
-  name        = "/${local.service}/${local.environment}/otel_config"
-  description = "ADOT collector config"
+resource "aws_ssm_parameter" "honeycomb_api_key" {
+  name        = "/${local.service}/${local.environment}/honeycomb_api_key"
+  description = "Honeycomb ingest API key, substituted into adot/otel-agent-config.yaml at runtime"
   type        = "SecureString"
   value       = "populated-out-of-band"
 
