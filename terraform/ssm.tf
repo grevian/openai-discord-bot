@@ -30,3 +30,14 @@ resource "aws_ssm_parameter" "honeycomb_api_key" {
     ignore_changes = [value]
   }
 }
+
+resource "aws_ssm_parameter" "image_tag" {
+  name        = "/${local.service}/${local.environment}/image_tag"
+  description = "Container image tag the bot instance pulls. Updated by GHA on each deploy."
+  type        = "String"
+  value       = "latest"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}

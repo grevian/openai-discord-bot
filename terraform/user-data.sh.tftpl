@@ -1,0 +1,107 @@
+#!/bin/bash
+set -euxo pipefail
+
+REGION="${region}"
+PARAM_PREFIX="/${service}/${environment}"
+IMAGE_REPO="${image_repo}"
+IMAGES_BUCKET="${images_bucket}"
+CONVERSATIONS_TBL="${conversations_tbl}"
+OTEL_VERSION="${otel_version}"
+
+dnf update -y
+dnf install -y docker tar gzip
+systemctl enable --now docker
+
+mkdir -p /etc/otel
+cat > /etc/otel/config.yaml <<'OTEL_CONFIG_EOF'
+${otel_config}
+OTEL_CONFIG_EOF
+
+ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')
+curl -fsSL -o /tmp/otelcol.tar.gz \
+  "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v$OTEL_VERSION/otelcol-contrib_$${OTEL_VERSION}_linux_$${ARCH}.tar.gz"
+tar -xzf /tmp/otelcol.tar.gz -C /usr/local/bin/ otelcol-contrib
+chmod +x /usr/local/bin/otelcol-contrib
+rm -f /tmp/otelcol.tar.gz
+
+cat > /usr/local/bin/start-bot.sh <<EOF
+#!/bin/bash
+set -euo pipefail
+
+REGION="$REGION"
+PARAM_PREFIX="$PARAM_PREFIX"
+IMAGE_REPO="$IMAGE_REPO"
+IMAGES_BUCKET="$IMAGES_BUCKET"
+CONVERSATIONS_TBL="$CONVERSATIONS_TBL"
+
+IMAGE_TAG=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/image_tag" --query 'Parameter.Value' --output text --region "\$REGION")
+DISCORD_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/discord_token" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
+OPENAI_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/openai_token" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
+
+IMAGE="\$IMAGE_REPO:\$IMAGE_TAG"
+docker pull "\$IMAGE"
+docker rm -f bot 2>/dev/null || true
+exec docker run --rm --name bot --network host \\
+  -e BOT_JSON_LOGS=true \\
+  -e BOT_TRACING=true \\
+  -e BOT_OTLP_LOGS=true \\
+  -e BOT_OPENAIDISCORDBOTIMAGES_NAME="\$IMAGES_BUCKET" \\
+  -e AI_DISCORD_BOT_CONVERSATIONS_NAME="\$CONVERSATIONS_TBL" \\
+  -e OTEL_SERVICE_NAME=danbot \\
+  -e OTEL_EXPORTER_OTLP_INSECURE=true \\
+  -e BOT_DISCORD_TOKEN="\$DISCORD_TOKEN" \\
+  -e BOT_OPENAI_AUTH_TOKEN="\$OPENAI_TOKEN" \\
+  "\$IMAGE"
+EOF
+chmod +x /usr/local/bin/start-bot.sh
+
+cat > /usr/local/bin/start-otel.sh <<EOF
+#!/bin/bash
+set -euo pipefail
+
+REGION="$REGION"
+PARAM_PREFIX="$PARAM_PREFIX"
+
+export HONEYCOMB_API_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/honeycomb_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
+
+exec /usr/local/bin/otelcol-contrib --config=/etc/otel/config.yaml
+EOF
+chmod +x /usr/local/bin/start-otel.sh
+
+cat > /etc/systemd/system/otel-collector.service <<'UNIT_EOF'
+[Unit]
+Description=OpenTelemetry Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/start-otel.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+
+cat > /etc/systemd/system/bot.service <<'UNIT_EOF'
+[Unit]
+Description=OpenAI Discord Bot
+After=docker.service otel-collector.service network-online.target
+Requires=docker.service
+Wants=otel-collector.service network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/start-bot.sh
+ExecStop=/usr/bin/docker stop bot
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+
+systemctl daemon-reload
+systemctl enable --now otel-collector.service
+systemctl enable --now bot.service
