@@ -11,8 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/bwmarrin/discordgo v0.29.0
-	github.com/pkg/errors v0.9.1
-	github.com/sashabaranov/go-openai v1.41.2
+	github.com/openai/openai-go/v3 v3.36.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/viper v1.21.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.18.0
@@ -70,6 +69,10 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.43.0 // indirect
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect

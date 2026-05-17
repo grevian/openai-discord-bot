@@ -14,7 +14,8 @@ import (
 
 	"github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
-	gpt "github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/responses"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -23,13 +24,14 @@ import (
 )
 
 type AIBot struct {
-	openapiClient  *gpt.Client
-	botCtx         context.Context
-	shutdown       context.CancelFunc
-	discordSession *discordgo.Session
-	basePrompt     []gpt.ChatCompletionMessage
-	storage        *storage.Storage
-	imageStorage   *storage.ImageStorage
+	openapiClient      openai.Client
+	botCtx             context.Context
+	shutdown           context.CancelFunc
+	discordSession     *discordgo.Session
+	systemInstructions string
+	basePrompt         []storage.ConversationMessage
+	storage            *storage.Storage
+	imageStorage       *storage.ImageStorage
 }
 
 func (b *AIBot) Go() error {
@@ -42,42 +44,41 @@ func (b *AIBot) Go() error {
 // true the caller should stop calling OpenAI and trigger process shutdown so
 // that ECS does not pile up a crash-loop of half-open Discord sessions.
 func isFatalOpenAIError(err error) bool {
-	var apiErr *gpt.APIError
+	var apiErr *openai.Error
 	if !errors.As(err, &apiErr) {
 		return false
 	}
-	if apiErr.HTTPStatusCode == http.StatusUnauthorized {
+	if apiErr.StatusCode == http.StatusUnauthorized {
 		return true
 	}
-	if code, ok := apiErr.Code.(string); ok {
-		return code == "insufficient_quota" || code == "invalid_api_key"
-	}
-	return false
+	return apiErr.Code == "insufficient_quota" || apiErr.Code == "invalid_api_key"
 }
 
-func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient *gpt.Client, discordSession *discordgo.Session, storage *storage.Storage, imageStorage *storage.ImageStorage) *AIBot {
+func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage) *AIBot {
 	promptBytes, err := os.ReadFile("prompts/danbo.json")
 	if err != nil {
 		log.Panic("Failed to read initial prompt", err)
 	}
 
-	promptMessages := struct {
-		Prompt []gpt.ChatCompletionMessage
+	promptFile := struct {
+		Instructions string                        `json:"instructions"`
+		Examples     []storage.ConversationMessage `json:"examples"`
 	}{}
-	err = json.Unmarshal(promptBytes, &promptMessages)
+	err = json.Unmarshal(promptBytes, &promptFile)
 
 	if err != nil {
 		log.Panic("Failed to parse initial prompt", err)
 	}
 
 	bot := &AIBot{
-		discordSession: discordSession,
-		openapiClient:  aiClient,
-		botCtx:         botCtx,
-		shutdown:       shutdown,
-		basePrompt:     promptMessages.Prompt,
-		storage:        storage,
-		imageStorage:   imageStorage,
+		discordSession:     discordSession,
+		openapiClient:      aiClient,
+		botCtx:             botCtx,
+		shutdown:           shutdown,
+		systemInstructions: promptFile.Instructions,
+		basePrompt:         promptFile.Examples,
+		storage:            threadStorage,
+		imageStorage:       imageStorage,
 	}
 
 	// TODO Wire up more handlers
@@ -185,19 +186,19 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	}
 
 	// Request the image(s) from openAI
-	imageRequest := gpt.ImageRequest{
+	imageRequest := openai.ImageGenerateParams{
 		Prompt:         prompt,
-		N:              1,
-		User:           m.Author.ID,
-		Size:           gpt.CreateImageSize1024x1024,
-		ResponseFormat: gpt.CreateImageResponseFormatURL,
-		Model:          gpt.CreateImageModelDallE3,
+		N:              openai.Int(1),
+		User:           openai.String(m.Author.ID),
+		Size:           openai.ImageGenerateParamsSize1024x1024,
+		ResponseFormat: openai.ImageGenerateParamsResponseFormatURL,
+		Model:          openai.ImageModelDallE3,
 	}
 	span.SetAttributes(
-		attribute.String("model", imageRequest.Model),
-		attribute.String("size", imageRequest.Size),
+		attribute.String("model", string(imageRequest.Model)),
+		attribute.String("size", string(imageRequest.Size)),
 	)
-	responseImage, err := b.openapiClient.CreateImage(ctx, imageRequest)
+	responseImage, err := b.openapiClient.Images.Generate(ctx, imageRequest)
 	if err != nil {
 		if isFatalOpenAIError(err) {
 			b.handleFatalOpenAIError(ctx, err)
@@ -271,28 +272,40 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 }
 
 // Handle a text completion prompt, including applying existing thread context and updating the stored state of that context
-func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel string, sanitizedUserPrompt string, threadPromptContext []gpt.ChatCompletionMessage, m *discordgo.MessageCreate) error {
+func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel string, sanitizedUserPrompt string, threadPromptContext []storage.ConversationMessage, m *discordgo.MessageCreate) error {
 	var err error
 	logger := slog.Default().WithGroup("handleCompletionPrompt")
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleCompletionPrompt")
 	defer span.End()
 
-	userMessage := gpt.ChatCompletionMessage{
-		Role:    "user",
-		Content: sanitizedUserPrompt,
+	inputItems := make([]responses.ResponseInputItemUnionParam, 0, len(b.basePrompt)+len(threadPromptContext)+1)
+	addMsg := func(role, content string) {
+		inputItems = append(inputItems, responses.ResponseInputItemParamOfMessage(
+			content,
+			responses.EasyInputMessageRole(role),
+		))
 	}
-	requestMessages := append(threadPromptContext, userMessage)
+	for _, msg := range b.basePrompt {
+		addMsg(msg.Role, msg.Content)
+	}
+	for _, msg := range threadPromptContext {
+		addMsg(msg.Role, msg.Content)
+	}
+	addMsg("user", sanitizedUserPrompt)
 
-	request := gpt.ChatCompletionRequest{
-		Model:    gpt.GPT3Dot5Turbo,
-		Messages: append(b.basePrompt, requestMessages...),
+	request := responses.ResponseNewParams{
+		Model:        openai.ChatModelGPT4oMini,
+		Instructions: openai.String(b.systemInstructions),
+		Input: responses.ResponseNewParamsInputUnion{
+			OfInputItemList: inputItems,
+		},
 	}
 
 	// Text completions seem to fail shockingly often, so we set them up to retry if necessary
 	var responseText string
 	err = retry.Do(
 		func() error {
-			response, err := b.openapiClient.CreateChatCompletion(ctx, request)
+			response, err := b.openapiClient.Responses.New(ctx, request)
 			if err != nil {
 				if isFatalOpenAIError(err) {
 					b.handleFatalOpenAIError(ctx, err)
@@ -301,7 +314,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 				logger.ErrorContext(ctx, "Failed to retrieve completion from OpenAI", slog.Any("error", err))
 				return err
 			}
-			responseText = response.Choices[0].Message.Content
+			responseText = response.OutputText()
 			if responseText == "" {
 				logger.WarnContext(ctx, "Empty response text from OpenAI", slog.Any("response", response))
 				return errors.New("Received an empty response from OpenAI")
@@ -319,7 +332,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	}
 
 	// TODO It's weird that we're modifying the stored thread state here, but loaded it elsewhere
-	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+userMessage.Content)
+	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+sanitizedUserPrompt)
 	if err != nil {
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
 		span.RecordError(warnErr)
@@ -343,7 +356,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 }
 
 // Create a new thread if requested, or load the context of a thread if already in one
-func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate) (responseChannel string, threadContext []gpt.ChatCompletionMessage, errResponse error) {
+func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate) (responseChannel string, threadContext []storage.ConversationMessage, errResponse error) {
 	logger := slog.Default().WithGroup("handleThreading")
 	// Default to responding to the channel the message came from
 	responseChannel = m.ChannelID
@@ -389,16 +402,14 @@ func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *di
 // Repeated calls are safe — context.CancelFunc is idempotent.
 func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 	logger := slog.Default().WithGroup("openai")
-	var apiErr *gpt.APIError
+	var apiErr *openai.Error
 	attrs := []any{slog.Any("error", err)}
 	if errors.As(err, &apiErr) {
 		attrs = append(attrs,
-			slog.Int("http_status", apiErr.HTTPStatusCode),
+			slog.Int("http_status", apiErr.StatusCode),
 			slog.String("openai_message", apiErr.Message),
+			slog.String("openai_error_code", apiErr.Code),
 		)
-		if code, ok := apiErr.Code.(string); ok {
-			attrs = append(attrs, slog.String("openai_error_code", code))
-		}
 	}
 	logger.ErrorContext(ctx, "Unrecoverable OpenAI error; triggering shutdown", attrs...)
 	if b.shutdown != nil {

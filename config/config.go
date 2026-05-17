@@ -10,7 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/bwmarrin/discordgo"
-	gpt "github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -103,17 +104,17 @@ func GetDiscordSession() (*discordgo.Session, error) {
 	return discordSession, nil
 }
 
-func GetOpenAISession() (*gpt.Client, error) {
+func GetOpenAISession() (openai.Client, error) {
 	authToken := viper.GetString("OPENAI_AUTH_TOKEN")
 	if authToken == "" {
-		return nil, fmt.Errorf("no authToken is present in configuration")
+		return openai.Client{}, fmt.Errorf("no authToken is present in configuration")
 	}
 
-	openaiCfg := gpt.DefaultConfig(authToken)
-	openaiCfg.HTTPClient = &http.Client{
+	httpClient := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
-	client := gpt.NewClientWithConfig(openaiCfg)
-
-	return client, nil
+	return openai.NewClient(
+		option.WithAPIKey(authToken),
+		option.WithHTTPClient(httpClient),
+	), nil
 }
