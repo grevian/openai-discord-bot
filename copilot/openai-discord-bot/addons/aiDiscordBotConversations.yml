@@ -13,6 +13,8 @@ Resources:
     Metadata:
       'aws:copilot:description': 'An Amazon DynamoDB table for aiDiscordBotConversations'
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub ${App}-${Env}-${Name}-aiDiscordBotConversations
       AttributeDefinitions:
