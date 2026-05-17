@@ -3,22 +3,12 @@ locals {
   conversations_table_name = "openai-discord-bot-test-openai-discord-bot-aiDiscordBotConversations"
 }
 
-import {
-  to = aws_s3_bucket.images
-  id = local.images_bucket_name
-}
-
 resource "aws_s3_bucket" "images" {
   bucket = local.images_bucket_name
 
   lifecycle {
     prevent_destroy = true
   }
-}
-
-import {
-  to = aws_s3_bucket_server_side_encryption_configuration.images
-  id = local.images_bucket_name
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "images" {
@@ -31,11 +21,6 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "images" {
   }
 }
 
-import {
-  to = aws_s3_bucket_public_access_block.images
-  id = local.images_bucket_name
-}
-
 resource "aws_s3_bucket_public_access_block" "images" {
   bucket = aws_s3_bucket.images.id
 
@@ -43,11 +28,6 @@ resource "aws_s3_bucket_public_access_block" "images" {
   block_public_policy     = true
   ignore_public_acls      = false
   restrict_public_buckets = false
-}
-
-import {
-  to = aws_s3_bucket_ownership_controls.images
-  id = local.images_bucket_name
 }
 
 resource "aws_s3_bucket_ownership_controls" "images" {
@@ -58,9 +38,58 @@ resource "aws_s3_bucket_ownership_controls" "images" {
   }
 }
 
-import {
-  to = aws_dynamodb_table.conversations
-  id = local.conversations_table_name
+data "aws_iam_policy_document" "images_policy" {
+  statement {
+    sid    = "AllowCloudFrontServicePrincipal"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.images.arn}/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.images.arn]
+    }
+  }
+
+  statement {
+    sid    = "ForceHTTPS"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = ["s3:*"]
+
+    resources = [
+      "${aws_s3_bucket.images.arn}/*",
+      aws_s3_bucket.images.arn,
+    ]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "images" {
+  bucket = aws_s3_bucket.images.id
+  policy = data.aws_iam_policy_document.images_policy.json
+}
+
+moved {
+  from = aws_s3_bucket_policy.images[0]
+  to   = aws_s3_bucket_policy.images
 }
 
 resource "aws_dynamodb_table" "conversations" {

@@ -66,6 +66,11 @@ resource "aws_ecs_task_definition" "service" {
         { name = "BOT_OPENAI_AUTH_TOKEN", valueFrom = aws_ssm_parameter.openai_token.arn },
       ]
 
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -80,9 +85,16 @@ resource "aws_ecs_task_definition" "service" {
       image     = "public.ecr.aws/aws-observability/aws-otel-collector:latest"
       essential = true
 
+      environment = []
+
       secrets = [
         { name = "AOT_CONFIG_CONTENT", valueFrom = aws_ssm_parameter.otel_config.arn },
       ]
+
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
 
       logConfiguration = {
         logDriver = "awslogs"
