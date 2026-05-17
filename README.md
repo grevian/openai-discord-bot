@@ -29,18 +29,21 @@ docker build -t openaibot . && docker run --rm -it openaibot \
 
 ## Deployment
 
-This bot uses the unfortunately named [AWS Copilot](https://aws.github.io/copilot-cli/docs/overview/) framework to deploy a simple docker service to ECS
+Infrastructure is managed by Terraform under [`terraform/`](terraform/). A single Fargate Spot service runs in `ca-central-1`, fronted by CloudFront on `sillybullshit.click` for image fetches. State lives in an S3 backend (`openai-discord-bot-tfstate-537108148763`) with native locking.
 
-It requires an OpenAI API Key, and a Discord Bot Token be set to `BOT_OPENAI_AUTH_TOKEN` and `BOT_DISCORD_TOKEN` respectively, probably in SSM,
- when deployed you should probably set `BOT_JSON_LOGS=true`
-
+Pushes to `master` trigger [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), which OIDC-assumes a role with `AdministratorAccess`, builds and pushes the image to ECR tagged with the commit SHA, then runs `terraform apply -var="image_tag=<sha>"`. To deploy manually:
 
 ```
-copilot env init               # Create a deployment environment, "test" by default
-copilot secret init            # Create an SSM secret for BOT_OPENAI_AUTH_TOKEN
-copilot secret init            # Create an SSM secret for BOT_DISCORD_TOKEN
-copilot deploy --env test      # Deploy the application to ECS
+cd terraform
+terraform init
+terraform apply -var="image_tag=$(git rev-parse --short HEAD)"
 ```
+
+Secrets live in SSM SecureString parameters and are referenced by the ECS task definition — values are populated out-of-band (not in Terraform state):
+
+- `/openai-discord-bot/prod/discord_token`
+- `/openai-discord-bot/prod/openai_token`
+- `/openai-discord-bot/prod/otel_config` (ADOT collector YAML)
 
 ## Attaching to Discord
 
