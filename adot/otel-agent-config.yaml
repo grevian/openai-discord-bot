@@ -16,15 +16,15 @@ exporters:
   otlp/traces:
     endpoint: api.honeycomb.io:443
     headers:
-      x-honeycomb-team: SET_HONEYCOMB_API_KEY_HERE
+      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
   otlp/containermetrics:
     endpoint: api.honeycomb.io:443
     headers:
-      x-honeycomb-team: SET_HONEYCOMB_API_KEY_HERE
+      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
   otlp/metrics:
     endpoint: api.honeycomb.io:443
     headers:
-      x-honeycomb-team: SET_HONEYCOMB_API_KEY_HERE
+      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
 
 service:
   pipelines:

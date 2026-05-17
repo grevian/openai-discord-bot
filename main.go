@@ -41,7 +41,7 @@ func main() {
 		log.Fatal("Failed to instantiate OpenAPI client", slog.Any("error", err))
 	}
 
-	botInstance := bot.NewAIBot(serviceCtx, openapiClient, discordSession, config.GetStorage(), config.GetImageStorage())
+	botInstance := bot.NewAIBot(serviceCtx, cancel, openapiClient, discordSession, config.GetStorage(), config.GetImageStorage())
 
 	logger.Info("Starting bot")
 	err = botInstance.Go()
@@ -49,9 +49,14 @@ func main() {
 		log.Fatal("Failed to run the bot!", slog.Any("error", err))
 	}
 
-	stop := make(chan os.Signal)
+	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
+	select {
+	case <-stop:
+		logger.Info("Received shutdown signal")
+	case <-serviceCtx.Done():
+		logger.Info("Service context cancelled (internal shutdown)")
+	}
 
 	logger.Info("Gracefully shutting down")
 	botInstance.Shutdown()

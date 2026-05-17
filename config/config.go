@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -115,19 +114,6 @@ func GetOpenAISession() (*gpt.Client, error) {
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
 	client := gpt.NewClientWithConfig(openaiCfg)
-
-	request := gpt.CompletionRequest{
-		Model:     gpt.GPT3Dot5TurboInstruct,
-		Prompt:    "are you alive?",
-		Suffix:    "",
-		MaxTokens: 5,
-	}
-	requestCtx, cancel := context.WithTimeout(context.Background(), time.Second*2)
-	defer cancel()
-	_, err := client.CreateCompletion(requestCtx, request)
-	if err != nil {
-		return nil, fmt.Errorf("openAPI client failed warmup request: %w", err)
-	}
 
 	return client, nil
 }
