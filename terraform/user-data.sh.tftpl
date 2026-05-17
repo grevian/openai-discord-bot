@@ -1,0 +1,106 @@
+#!/bin/bash
+set -euxo pipefail
+
+REGION="${region}"
+PARAM_PREFIX="/${service}/${environment}"
+IMAGE_REPO="${image_repo}"
+IMAGES_BUCKET="${images_bucket}"
+CONVERSATIONS_TBL="${conversations_tbl}"
+
+dnf update -y
+dnf install -y docker
+systemctl enable --now docker
+
+mkdir -p /etc/otel
+cat > /etc/otel/config.yaml <<'OTEL_CONFIG_EOF'
+${otel_config}
+OTEL_CONFIG_EOF
+
+cat > /usr/local/bin/start-bot.sh <<EOF
+#!/bin/bash
+set -euo pipefail
+
+REGION="$REGION"
+PARAM_PREFIX="$PARAM_PREFIX"
+IMAGE_REPO="$IMAGE_REPO"
+IMAGES_BUCKET="$IMAGES_BUCKET"
+CONVERSATIONS_TBL="$CONVERSATIONS_TBL"
+
+IMAGE_TAG=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/image_tag" --query 'Parameter.Value' --output text --region "\$REGION")
+DISCORD_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/discord_token" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
+OPENAI_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/openai_token" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
+
+IMAGE="\$IMAGE_REPO:\$IMAGE_TAG"
+docker pull "\$IMAGE"
+docker rm -f bot 2>/dev/null || true
+exec docker run --rm --name bot --network host \\
+  -e BOT_JSON_LOGS=true \\
+  -e BOT_TRACING=true \\
+  -e BOT_OTLP_LOGS=true \\
+  -e BOT_OPENAIDISCORDBOTIMAGES_NAME="\$IMAGES_BUCKET" \\
+  -e AI_DISCORD_BOT_CONVERSATIONS_NAME="\$CONVERSATIONS_TBL" \\
+  -e OTEL_SERVICE_NAME=danbot \\
+  -e OTEL_EXPORTER_OTLP_INSECURE=true \\
+  -e BOT_DISCORD_TOKEN="\$DISCORD_TOKEN" \\
+  -e BOT_OPENAI_AUTH_TOKEN="\$OPENAI_TOKEN" \\
+  "\$IMAGE"
+EOF
+chmod +x /usr/local/bin/start-bot.sh
+
+cat > /usr/local/bin/start-otel.sh <<EOF
+#!/bin/bash
+set -euo pipefail
+
+REGION="$REGION"
+PARAM_PREFIX="$PARAM_PREFIX"
+
+HONEYCOMB_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/honeycomb_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
+
+docker pull public.ecr.aws/aws-observability/aws-otel-collector:latest
+docker rm -f otel-collector 2>/dev/null || true
+exec docker run --rm --name otel-collector --network host \\
+  -e HONEYCOMB_API_KEY="\$HONEYCOMB_KEY" \\
+  -e AOT_CONFIG_CONTENT="\$(cat /etc/otel/config.yaml)" \\
+  public.ecr.aws/aws-observability/aws-otel-collector:latest
+EOF
+chmod +x /usr/local/bin/start-otel.sh
+
+cat > /etc/systemd/system/otel-collector.service <<'UNIT_EOF'
+[Unit]
+Description=OTEL Collector
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/start-otel.sh
+ExecStop=/usr/bin/docker stop otel-collector
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+
+cat > /etc/systemd/system/bot.service <<'UNIT_EOF'
+[Unit]
+Description=OpenAI Discord Bot
+After=docker.service otel-collector.service network-online.target
+Requires=docker.service
+Wants=otel-collector.service network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/start-bot.sh
+ExecStop=/usr/bin/docker stop bot
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+
+systemctl daemon-reload
+systemctl enable --now otel-collector.service
+systemctl enable --now bot.service

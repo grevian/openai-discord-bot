@@ -4,7 +4,8 @@ locals {
   name_prefix = "${local.service}-${local.environment}"
   domain      = "sillybullshit.click"
 
-  cpu           = 256
-  memory        = 512
   log_retention = 30
+
+  github_owner = "grevian"
+  image_repo   = "ghcr.io/${local.github_owner}/${local.service}"
 }
