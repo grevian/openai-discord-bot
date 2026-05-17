@@ -21,7 +21,12 @@ exporters:
     endpoint: api.honeycomb.io:443
     headers:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+      x-honeycomb-dataset: "ecs_metrics"
   otlp/metrics:
+    endpoint: api.honeycomb.io:443
+    headers:
+      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+  otlp/logs:
     endpoint: api.honeycomb.io:443
     headers:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
@@ -40,4 +45,7 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlp/metrics]
-
+    logs:
+      receivers: [ otlp ]
+      processors: [ batch ]
+      exporters: [ otlp/logs ]
