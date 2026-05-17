@@ -4,7 +4,7 @@ data "aws_ssm_parameter" "al2023_arm64_ami" {
 
 resource "aws_security_group" "instance" {
   name        = "${local.name_prefix}-instance"
-  description = "Bot EC2 instance — egress only"
+  description = "Bot EC2 instance: egress only"
   vpc_id      = aws_vpc.main.id
 
   egress {
