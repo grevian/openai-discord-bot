@@ -9,3 +9,9 @@ variable "desired_count" {
   type        = number
   default     = 1
 }
+
+variable "post_cutover" {
+  description = "Flip to true after copilot env delete: provisions the S3 bucket policy and Route53 alias once Copilot's CFN no longer manages them."
+  type        = bool
+  default     = false
+}
