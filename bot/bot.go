@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 
+	"openai-discord-bot/bot/storage"
+
 	"github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
 	gpt "github.com/sashabaranov/go-openai"
@@ -19,7 +21,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"openai-discord-bot/bot/storage"
 )
 
 type AIBot struct {
@@ -169,6 +170,10 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
+	_, err := b.discordSession.ChannelMessageSend("1091532074495787049", "Gah! I'm awake! How long was I out?!")
+	if err != nil {
+		slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
+	}
 }
 
 func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, m *discordgo.MessageCreate) error {
