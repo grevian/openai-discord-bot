@@ -58,51 +58,17 @@ resource "aws_s3_bucket_ownership_controls" "images" {
   }
 }
 
-data "aws_iam_policy_document" "images_force_https" {
-  statement {
-    sid    = "ForceHTTPS"
-    effect = "Deny"
-
-    principals {
-      type        = "*"
-      identifiers = ["*"]
-    }
-
-    actions = ["s3:*"]
-
-    resources = [
-      "${aws_s3_bucket.images.arn}/*",
-      aws_s3_bucket.images.arn,
-    ]
-
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["false"]
-    }
-  }
-}
-
-import {
-  to = aws_s3_bucket_policy.images
-  id = local.images_bucket_name
-}
-
-resource "aws_s3_bucket_policy" "images" {
-  bucket = aws_s3_bucket.images.id
-  policy = data.aws_iam_policy_document.images_force_https.json
-}
-
 import {
   to = aws_dynamodb_table.conversations
   id = local.conversations_table_name
 }
 
 resource "aws_dynamodb_table" "conversations" {
-  name         = local.conversations_table_name
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "thread_id"
-  range_key    = "message_unix_time"
+  name                        = local.conversations_table_name
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "thread_id"
+  range_key                   = "message_unix_time"
+  deletion_protection_enabled = true
 
   attribute {
     name = "thread_id"
