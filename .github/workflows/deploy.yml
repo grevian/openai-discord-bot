@@ -6,13 +6,19 @@ on:
     branches:
       - master
 
+env:
+  AWS_REGION: ca-central-1
+  ECR_REPOSITORY: openai-discord-bot
+  TF_VERSION: 1.11.4
+
 jobs:
-  build:  
+  deploy:
     environment: production
     runs-on: ubuntu-latest
     concurrency: production
     permissions:
-      id-token: write # This is required for requesting the JWT
+      id-token: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v6
@@ -20,14 +26,32 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-region: ca-central-1
+          aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          role-duration-seconds: 1200
+          role-duration-seconds: 1800
 
-      - uses: ksivamuthu/aws-copilot-github-action@v0.0.8
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
         with:
-          command: deploy
-          app: openai-discord-bot
-          env: test # Test is prod, on this one...
-          force: true
-          version: v1.29.1 # Workaround for https://github.com/ksivamuthu/aws-copilot-github-action/issues/194
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve -var="image_tag=${{ github.sha }}"
