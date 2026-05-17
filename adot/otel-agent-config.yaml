@@ -1,13 +1,38 @@
 receivers:
-  awsxray:
-    transport: udp
-  awsecscontainermetrics:
   otlp:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
+
+  hostmetrics:
+    collection_interval: 60s
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+          system.cpu.time:
+            enabled: false
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      load:
+      filesystem:
+        include_mount_points:
+          mount_points: ["/"]
+          match_type: strict
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+
+  journald:
+    units:
+      - bot.service
+      - otel-collector.service
+    priority: info
 
 processors:
   batch:
@@ -17,15 +42,15 @@ exporters:
     endpoint: api.honeycomb.io:443
     headers:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
-  otlp/containermetrics:
-    endpoint: api.honeycomb.io:443
-    headers:
-      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
-      x-honeycomb-dataset: "ecs_metrics"
   otlp/metrics:
     endpoint: api.honeycomb.io:443
     headers:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+  otlp/host_metrics:
+    endpoint: api.honeycomb.io:443
+    headers:
+      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+      x-honeycomb-dataset: "host_metrics"
   otlp/logs:
     endpoint: api.honeycomb.io:443
     headers:
@@ -37,15 +62,19 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlp/traces]
-    metrics/container:
-      receivers: [awsecscontainermetrics]
-      processors: [batch]
-      exporters: [otlp/containermetrics]
     metrics/application:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlp/metrics]
+    metrics/host:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [otlp/host_metrics]
     logs:
-      receivers: [ otlp ]
-      processors: [ batch ]
-      exporters: [ otlp/logs ]
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/logs]
+    logs/journald:
+      receivers: [journald]
+      processors: [batch]
+      exporters: [otlp/logs]

@@ -1,11 +1,11 @@
-variable "image_tag" {
-  description = "Container image tag deployed by the GHA workflow. Override per-deploy."
+variable "instance_type" {
+  description = "EC2 instance type for the bot. ARM/Graviton."
   type        = string
-  default     = "latest"
+  default     = "t4g.nano"
 }
 
-variable "desired_count" {
-  description = "ECS service desired task count."
-  type        = number
-  default     = 1
+variable "otel_collector_version" {
+  description = "Version of opentelemetry-collector-contrib to install on the instance."
+  type        = string
+  default     = "0.119.0"
 }

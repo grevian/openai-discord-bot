@@ -1,49 +1,45 @@
-data "aws_iam_policy_document" "ecs_tasks_assume" {
+data "aws_iam_policy_document" "ec2_assume" {
   statement {
     actions = ["sts:AssumeRole"]
     principals {
       type        = "Service"
-      identifiers = ["ecs-tasks.amazonaws.com"]
+      identifiers = ["ec2.amazonaws.com"]
     }
   }
 }
 
-resource "aws_iam_role" "execution" {
-  name               = "${local.name_prefix}-execution"
-  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+resource "aws_iam_role" "bot" {
+  name               = "${local.name_prefix}-instance"
+  assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
 }
 
-resource "aws_iam_role_policy_attachment" "execution_managed" {
-  role       = aws_iam_role.execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+resource "aws_iam_role_policy_attachment" "bot_ssm_core" {
+  role       = aws_iam_role.bot.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-resource "aws_iam_role_policy" "execution_ssm" {
-  name = "ssm-read"
-  role = aws_iam_role.execution.id
+resource "aws_iam_role_policy" "bot_ssm_params" {
+  name = "ssm-params"
+  role = aws_iam_role.bot.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
-      Action = ["ssm:GetParameters", "ssm:GetParameter"]
+      Action = ["ssm:GetParameter", "ssm:GetParameters"]
       Resource = [
         aws_ssm_parameter.discord_token.arn,
         aws_ssm_parameter.openai_token.arn,
         aws_ssm_parameter.honeycomb_api_key.arn,
+        aws_ssm_parameter.image_tag.arn,
       ]
     }]
   })
 }
 
-resource "aws_iam_role" "task" {
-  name               = "${local.name_prefix}-task"
-  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
-}
-
-resource "aws_iam_role_policy" "task_dynamodb" {
+resource "aws_iam_role_policy" "bot_dynamodb" {
   name = "dynamodb"
-  role = aws_iam_role.task.id
+  role = aws_iam_role.bot.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -76,9 +72,9 @@ resource "aws_iam_role_policy" "task_dynamodb" {
   })
 }
 
-resource "aws_iam_role_policy" "task_s3" {
+resource "aws_iam_role_policy" "bot_s3" {
   name = "s3"
-  role = aws_iam_role.task.id
+  role = aws_iam_role.bot.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -104,4 +100,9 @@ resource "aws_iam_role_policy" "task_s3" {
       },
     ]
   })
+}
+
+resource "aws_iam_instance_profile" "bot" {
+  name = "${local.name_prefix}-instance"
+  role = aws_iam_role.bot.name
 }
