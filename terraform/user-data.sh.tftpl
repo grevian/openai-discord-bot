@@ -6,15 +6,23 @@ PARAM_PREFIX="/${service}/${environment}"
 IMAGE_REPO="${image_repo}"
 IMAGES_BUCKET="${images_bucket}"
 CONVERSATIONS_TBL="${conversations_tbl}"
+OTEL_VERSION="${otel_version}"
 
 dnf update -y
-dnf install -y docker
+dnf install -y docker tar gzip
 systemctl enable --now docker
 
 mkdir -p /etc/otel
 cat > /etc/otel/config.yaml <<'OTEL_CONFIG_EOF'
 ${otel_config}
 OTEL_CONFIG_EOF
+
+ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')
+curl -fsSL -o /tmp/otelcol.tar.gz \
+  "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v$OTEL_VERSION/otelcol-contrib_$${OTEL_VERSION}_linux_$${ARCH}.tar.gz"
+tar -xzf /tmp/otelcol.tar.gz -C /usr/local/bin/ otelcol-contrib
+chmod +x /usr/local/bin/otelcol-contrib
+rm -f /tmp/otelcol.tar.gz
 
 cat > /usr/local/bin/start-bot.sh <<EOF
 #!/bin/bash
@@ -54,28 +62,21 @@ set -euo pipefail
 REGION="$REGION"
 PARAM_PREFIX="$PARAM_PREFIX"
 
-HONEYCOMB_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/honeycomb_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
+export HONEYCOMB_API_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/honeycomb_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
 
-docker pull public.ecr.aws/aws-observability/aws-otel-collector:latest
-docker rm -f otel-collector 2>/dev/null || true
-exec docker run --rm --name otel-collector --network host \\
-  -e HONEYCOMB_API_KEY="\$HONEYCOMB_KEY" \\
-  -e AOT_CONFIG_CONTENT="\$(cat /etc/otel/config.yaml)" \\
-  public.ecr.aws/aws-observability/aws-otel-collector:latest
+exec /usr/local/bin/otelcol-contrib --config=/etc/otel/config.yaml
 EOF
 chmod +x /usr/local/bin/start-otel.sh
 
 cat > /etc/systemd/system/otel-collector.service <<'UNIT_EOF'
 [Unit]
-Description=OTEL Collector
-After=docker.service network-online.target
-Requires=docker.service
+Description=OpenTelemetry Collector
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/start-otel.sh
-ExecStop=/usr/bin/docker stop otel-collector
 Restart=always
 RestartSec=10
 
