@@ -9,8 +9,7 @@ import (
 
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
-	"go.opentelemetry.io/contrib/detectors/aws/ec2"
-	"go.opentelemetry.io/contrib/detectors/aws/ecs"
+	"go.opentelemetry.io/contrib/detectors/aws/ec2/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -21,7 +20,6 @@ import (
 )
 
 var ec2ResourceDetector = ec2.NewResourceDetector()
-var ecsResourceDetector = ecs.NewResourceDetector()
 
 func configureTracing(serviceCtx context.Context) error {
 	// Configure a traceExporter to write to a sidecar collector
@@ -36,14 +34,12 @@ func configureTracing(serviceCtx context.Context) error {
 	detectionCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	ec2Resource, _ := ec2ResourceDetector.Detect(detectionCtx)
-	ecsResource, _ := ecsResourceDetector.Detect(detectionCtx)
 
 	// Configure a trace provider and set it as the global default
 	traceProvider := trace.NewTracerProvider(
 		trace.WithSampler(trace.AlwaysSample()),
 		trace.WithBatcher(traceExporter),
 		trace.WithResource(ec2Resource),
-		trace.WithResource(ecsResource),
 	)
 	otel.SetTracerProvider(traceProvider)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
@@ -84,12 +80,10 @@ func configureLogging(serviceCtx context.Context) error {
 		detectionCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 		ec2Resource, _ := ec2ResourceDetector.Detect(detectionCtx)
-		ecsResource, _ := ecsResourceDetector.Detect(detectionCtx)
 
 		provider := otellog.NewLoggerProvider(
 			otellog.WithProcessor(otellog.NewBatchProcessor(exp)),
 			otellog.WithResource(ec2Resource),
-			otellog.WithResource(ecsResource),
 		)
 		global.SetLoggerProvider(provider)
 
