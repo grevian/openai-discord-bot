@@ -353,15 +353,24 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	if err != nil {
 		return fmt.Errorf("failed to read source image: %w", err)
 	}
-	logger.DebugContext(ctx, "source image fetched", slog.Int("bytes", len(srcBytes)))
+	srcContentType, srcFilename := detectImageType(srcBytes)
+	logger.DebugContext(ctx, "source image fetched",
+		slog.Int("bytes", len(srcBytes)),
+		slog.String("content_type", srcContentType))
+	if srcContentType == "" {
+		return fmt.Errorf("source image is not a supported format (png/jpeg/webp)")
+	}
 
 	fullPrompt := prompt
 	if b.drawingInstructions != "" {
 		fullPrompt = b.drawingInstructions + " " + prompt
 	}
 
+	// The OpenAI multipart encoder needs a recognizable filename + content type;
+	// without it the form part is sent as application/octet-stream and the Edit
+	// endpoint rejects it. openai.File wires both onto the io.Reader.
 	editRequest := openai.ImageEditParams{
-		Image:  openai.ImageEditParamsImageUnion{OfFile: bytes.NewReader(srcBytes)},
+		Image:  openai.ImageEditParamsImageUnion{OfFile: openai.File(bytes.NewReader(srcBytes), srcFilename, srcContentType)},
 		Prompt: fullPrompt,
 		N:      openai.Int(1),
 		User:   openai.String(m.Author.ID),
@@ -418,6 +427,22 @@ func findEditSourceImage(s *discordgo.Session, m *discordgo.MessageCreate) strin
 		}
 	}
 	return ""
+}
+
+// detectImageType sniffs the leading bytes of an image and returns the MIME
+// type + a matching filename for the formats OpenAI's image edit endpoint
+// accepts (png/jpeg/webp). Returns "", "" for anything else.
+func detectImageType(b []byte) (contentType, filename string) {
+	sniffed := http.DetectContentType(b)
+	switch sniffed {
+	case "image/png":
+		return sniffed, "source.png"
+	case "image/jpeg":
+		return sniffed, "source.jpg"
+	case "image/webp":
+		return sniffed, "source.webp"
+	}
+	return "", ""
 }
 
 func isImageAttachment(att *discordgo.MessageAttachment) bool {
