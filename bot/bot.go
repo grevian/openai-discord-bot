@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +88,23 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 	discordSession.AddHandler(bot.messageCreate)
 
 	return bot
+}
+
+// decodedBase64Length returns the number of bytes a standard-base64 string will
+// decode to, without performing the decode. S3 needs the content length up
+// front, and we want to avoid buffering the decoded image just to measure it.
+func decodedBase64Length(s string) (int64, error) {
+	if len(s)%4 != 0 {
+		return 0, fmt.Errorf("base64 length %d is not a multiple of 4", len(s))
+	}
+	padding := 0
+	switch {
+	case strings.HasSuffix(s, "=="):
+		padding = 2
+	case strings.HasSuffix(s, "="):
+		padding = 1
+	}
+	return int64(len(s)/4*3 - padding), nil
 }
 
 func userWasMentioned(user *discordgo.User, mentioned []*discordgo.User) bool {
@@ -192,12 +210,11 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 
 	// Request the image(s) from openAI
 	imageRequest := openai.ImageGenerateParams{
-		Prompt:         prompt,
-		N:              openai.Int(1),
-		User:           openai.String(m.Author.ID),
-		Size:           openai.ImageGenerateParamsSize1024x1024,
-		ResponseFormat: openai.ImageGenerateParamsResponseFormatURL,
-		Model:          openai.ImageModelDallE3,
+		Prompt: prompt,
+		N:      openai.Int(1),
+		User:   openai.String(m.Author.ID),
+		Size:   openai.ImageGenerateParamsSize1024x1024,
+		Model:  openai.ImageModelGPTImage1,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(imageRequest.Model)),
@@ -211,24 +228,19 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return fmt.Errorf("failed to get image from openai: %w", err)
 	}
 
-	// Retrieve the image from openai
-	imageReader, imageLength, err := b.imageStorage.GetImageFromURL(ctx, responseImage.Data[0].URL)
+	// gpt-image-1 returns the image as base64 inline; decode it streaming so we
+	// never hold the fully-decoded image in memory alongside the encoded copy.
+	b64 := responseImage.Data[0].B64JSON
+	imageLength, err := decodedBase64Length(b64)
 	if err != nil {
-		return fmt.Errorf("failed to store retrieved image: %w", err)
+		return fmt.Errorf("invalid base64 image from openai: %w", err)
 	}
-	logger.DebugContext(ctx, "image retrieval", slog.Int64("image_length", imageLength), slog.String("url", responseImage.Data[0].URL))
-
-	defer func() {
-		closeErr := imageReader.Close()
-		if closeErr != nil {
-			span.RecordError(err)
-			logger.ErrorContext(ctx, "failed to close image request body", slog.Any("error", closeErr))
-		}
-	}()
+	logger.DebugContext(ctx, "image retrieval", slog.Int64("image_length", imageLength))
 
 	// Tee the image reading stream, so that we can upload it to discord and S3 at the same time
 	pipeReader, pipeWriter := io.Pipe()
-	imageTeeReader := io.TeeReader(imageReader, pipeWriter)
+	imageDecoder := base64.NewDecoder(base64.StdEncoding, strings.NewReader(b64))
+	imageTeeReader := io.TeeReader(imageDecoder, pipeWriter)
 
 	// Record the image to S3, and our thread context
 	go func() {
