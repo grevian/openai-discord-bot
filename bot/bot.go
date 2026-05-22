@@ -30,8 +30,9 @@ type AIBot struct {
 	botCtx             context.Context
 	shutdown           context.CancelFunc
 	discordSession     *discordgo.Session
-	systemInstructions string
-	basePrompt         []storage.ConversationMessage
+	systemInstructions  string
+	drawingInstructions string
+	basePrompt          []storage.ConversationMessage
 	storage            *storage.Storage
 	imageStorage       *storage.ImageStorage
 }
@@ -63,8 +64,9 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 	}
 
 	promptFile := struct {
-		Instructions string                        `json:"instructions"`
-		Examples     []storage.ConversationMessage `json:"examples"`
+		Instructions        string                        `json:"instructions"`
+		DrawingInstructions string                        `json:"drawing_instructions"`
+		Examples            []storage.ConversationMessage `json:"examples"`
 	}{}
 	err = json.Unmarshal(promptBytes, &promptFile)
 
@@ -77,8 +79,9 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 		openapiClient:      aiClient,
 		botCtx:             botCtx,
 		shutdown:           shutdown,
-		systemInstructions: promptFile.Instructions,
-		basePrompt:         promptFile.Examples,
+		systemInstructions:  promptFile.Instructions,
+		drawingInstructions: promptFile.DrawingInstructions,
+		basePrompt:          promptFile.Examples,
 		storage:            threadStorage,
 		imageStorage:       imageStorage,
 	}
@@ -208,9 +211,16 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return fmt.Errorf("failed to record drawing prompt: %w", err)
 	}
 
+	// Prepend the drawing system instructions so every generated image carries
+	// the danbot art style, even though the image API has no system-prompt slot.
+	fullPrompt := prompt
+	if b.drawingInstructions != "" {
+		fullPrompt = b.drawingInstructions + " " + prompt
+	}
+
 	// Request the image(s) from openAI
 	imageRequest := openai.ImageGenerateParams{
-		Prompt: prompt,
+		Prompt: fullPrompt,
 		N:      openai.Int(1),
 		User:   openai.String(m.Author.ID),
 		Size:   openai.ImageGenerateParamsSize1024x1024,
