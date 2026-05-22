@@ -192,12 +192,11 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 
 	// Request the image(s) from openAI
 	imageRequest := openai.ImageGenerateParams{
-		Prompt:         prompt,
-		N:              openai.Int(1),
-		User:           openai.String(m.Author.ID),
-		Size:           openai.ImageGenerateParamsSize1024x1024,
-		ResponseFormat: openai.ImageGenerateParamsResponseFormatURL,
-		Model:          openai.ImageModelDallE3,
+		Prompt: prompt,
+		N:      openai.Int(1),
+		User:   openai.String(m.Author.ID),
+		Size:   openai.ImageGenerateParamsSize1024x1024,
+		Model:  openai.ImageModelDallE3,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(imageRequest.Model)),
