@@ -27,15 +27,15 @@ import (
 )
 
 type AIBot struct {
-	openapiClient      openai.Client
-	botCtx             context.Context
-	shutdown           context.CancelFunc
-	discordSession     *discordgo.Session
+	openapiClient       openai.Client
+	botCtx              context.Context
+	shutdown            context.CancelFunc
+	discordSession      *discordgo.Session
 	systemInstructions  string
 	drawingInstructions string
 	basePrompt          []storage.ConversationMessage
-	storage            *storage.Storage
-	imageStorage       *storage.ImageStorage
+	storage             *storage.Storage
+	imageStorage        *storage.ImageStorage
 }
 
 func (b *AIBot) Go() error {
@@ -76,15 +76,15 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 	}
 
 	bot := &AIBot{
-		discordSession:     discordSession,
-		openapiClient:      aiClient,
-		botCtx:             botCtx,
-		shutdown:           shutdown,
+		discordSession:      discordSession,
+		openapiClient:       aiClient,
+		botCtx:              botCtx,
+		shutdown:            shutdown,
 		systemInstructions:  promptFile.Instructions,
 		drawingInstructions: promptFile.DrawingInstructions,
 		basePrompt:          promptFile.Examples,
-		storage:            threadStorage,
-		imageStorage:       imageStorage,
+		storage:             threadStorage,
+		imageStorage:        imageStorage,
 	}
 
 	// TODO Wire up more handlers
@@ -245,7 +245,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		N:      openai.Int(1),
 		User:   openai.String(m.Author.ID),
 		Size:   openai.ImageGenerateParamsSize1024x1024,
-		Model:  openai.ImageModelGPTImage1,
+		Model:  openai.ImageModelGPTImage2,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(imageRequest.Model)),
