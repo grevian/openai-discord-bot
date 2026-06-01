@@ -30,13 +30,6 @@ resource "aws_launch_template" "bot" {
     security_groups             = [aws_security_group.instance.id]
   }
 
-  instance_market_options {
-    market_type = "spot"
-    spot_options {
-      spot_instance_type = "one-time"
-    }
-  }
-
   metadata_options {
     http_tokens                 = "required"
     http_endpoint               = "enabled"
