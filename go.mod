@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.69.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.2
 	github.com/bwmarrin/discordgo v0.29.0
-	github.com/openai/openai-go/v3 v3.64.3
+	github.com/openai/openai-go/v3 v3.66.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/viper v1.21.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1
