@@ -60,6 +60,13 @@ func TestChatCompletion(t *testing.T) {
 		t.Fatalf("expected one completion call, got %d", len(tb.responses.calls))
 	}
 	req := tb.responses.calls[0]
+	// Literal values on purpose: a model swap must update this test deliberately.
+	if req.Model != "gpt-6-luna" {
+		t.Errorf("model = %q, want gpt-6-luna", req.Model)
+	}
+	if req.Reasoning.Effort != "low" {
+		t.Errorf("reasoning effort = %q, want low", req.Reasoning.Effort)
+	}
 	if req.Instructions.Value != testSysInst {
 		t.Errorf("instructions = %q", req.Instructions.Value)
 	}
@@ -101,11 +108,11 @@ func TestChatCompletionStorageFailureIsNotFatal(t *testing.T) {
 func TestChatCompletionFailureNotifiesChannel(t *testing.T) {
 	tb := newTestBot(t)
 	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
-		return nil, &openai.Error{StatusCode: http.StatusBadRequest}
+		return nil, &openai.Error{StatusCode: http.StatusBadRequest, Code: "content_policy_violation"}
 	}
 	tb.bot.handleMessage(context.Background(), mention("hello"))
 	got := tb.discord.sentMessages()
-	if len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if len(got) != 1 || got[0].Content != msgInvalidRequest {
 		t.Fatalf("unexpected messages %+v", got)
 	}
 	if len(tb.threads.addedMessages()) != 0 {
@@ -215,11 +222,14 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 		t.Fatalf("expected one Generate call, got %d", len(tb.images.generated))
 	}
 	req := tb.images.generated[0]
+	if req.Model != "gpt-image-2" {
+		t.Errorf("model = %q, want gpt-image-2", req.Model)
+	}
 	if !strings.HasPrefix(req.Prompt, testDrawing+" ") || !strings.HasSuffix(req.Prompt, " a cat") {
 		t.Errorf("prompt = %q", req.Prompt)
 	}
-	if req.User.Value != userID {
-		t.Errorf("user = %q", req.User.Value)
+	if req.SafetyIdentifier.Value != userID {
+		t.Errorf("safety identifier = %q", req.SafetyIdentifier.Value)
 	}
 
 	sent := tb.discord.sentMessages()
@@ -250,11 +260,11 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 func TestDrawFailureNotifiesChannel(t *testing.T) {
 	tb := newTestBot(t)
 	tb.images.generate = func(context.Context, openai.ImageGenerateParams) (*openai.ImagesResponse, error) {
-		return nil, errors.New("nope")
+		return nil, errors.New("nope-internal-detail")
 	}
 	tb.bot.handleMessage(context.Background(), mention("🎨 a cat"))
 	got := tb.discord.sentMessages()
-	if len(got) != 1 || !strings.HasPrefix(got[0].Content, "I fucked that up and threw it away. Sorry. (") {
+	if len(got) != 1 || got[0].Content != msgGeneric {
 		t.Fatalf("unexpected messages %+v", got)
 	}
 }
@@ -286,7 +296,7 @@ func TestDispatchRejectsInvalidBase64(t *testing.T) {
 	}
 	tb.bot.handleMessage(context.Background(), mention("🎨 a cat"))
 	got := tb.discord.sentMessages()
-	if len(got) != 1 || got[0].File != nil || !strings.Contains(got[0].Content, "invalid base64") {
+	if len(got) != 1 || got[0].File != nil || got[0].Content != msgGeneric {
 		t.Fatalf("expected an error message and no image, got %+v", got)
 	}
 }
@@ -308,6 +318,9 @@ func TestEditUsesAttachment(t *testing.T) {
 		t.Fatalf("expected one Edit call, got %d", len(tb.images.edited))
 	}
 	req := tb.images.edited[0]
+	if req.Model != "gpt-image-2" {
+		t.Errorf("model = %q, want gpt-image-2", req.Model)
+	}
 	if req.Prompt != testDrawing+" add a hat" {
 		t.Errorf("prompt = %q", req.Prompt)
 	}
@@ -336,7 +349,7 @@ func TestEditRejectsUnsupportedSource(t *testing.T) {
 	if len(tb.images.edited) != 0 {
 		t.Error("unsupported formats must not be sent to OpenAI")
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || !strings.Contains(got[0].Content, "not a supported format") {
+	if got := tb.discord.sentMessages(); len(got) != 1 || !strings.Contains(got[0].Content, "supported format") {
 		t.Errorf("unexpected messages %+v", got)
 	}
 }
@@ -350,7 +363,7 @@ func TestEditSourceFetchFailure(t *testing.T) {
 	if len(tb.images.edited) != 0 {
 		t.Error("no edit should be requested without a source image")
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || !strings.Contains(got[0].Content, "failed to fetch source image") {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Errorf("unexpected messages %+v", got)
 	}
 }
@@ -420,7 +433,7 @@ func equalStored(a, b []storedMessage) bool {
 func TestReadyAndShutdownNotifyOperator(t *testing.T) {
 	tb := newTestBot(t)
 	tb.bot.ReadyHandler(nil, &discordgo.Ready{})
-	tb.bot.Shutdown()
+	tb.bot.Shutdown(context.Background())
 	got := tb.discord.sentMessages()
 	if len(got) != 2 || got[0].Content != "Gah! I'm awake! How long was I out?!" || got[1].Content != "Here I go, shutting down again!" {
 		t.Fatalf("unexpected messages %+v", got)
@@ -434,7 +447,7 @@ func TestReadyAndShutdownNotifyOperator(t *testing.T) {
 	// A failed send is only logged.
 	tb.discord.sendErr = errors.New("discord down")
 	tb.bot.ReadyHandler(nil, &discordgo.Ready{})
-	tb.bot.Shutdown()
+	tb.bot.Shutdown(context.Background())
 }
 
 func TestSessionDiscordReadsState(t *testing.T) {

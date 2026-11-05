@@ -225,3 +225,30 @@ func TestNoGalleryConfiguredIsFine(t *testing.T) {
 		t.Fatalf("sent = %+v", sent)
 	}
 }
+
+// Drain waits for gallery publishes that are already running, so a deploy does
+// not drop the image it was just handed.
+func TestDrainWaitsForGalleryPublishes(t *testing.T) {
+	g := &fakeGallery{block: make(chan struct{})}
+	tb := drawingBot(t, g)
+	tb.bot.messageCreate(nil, mention("🎨 a cat"))
+
+	drained := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		drained <- tb.bot.Drain(ctx)
+	}()
+	select {
+	case err := <-drained:
+		t.Fatalf("Drain returned while a gallery publish was running: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(g.block)
+	if err := <-drained; err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(g.submissions()) != 1 {
+		t.Error("the publish did not complete")
+	}
+}

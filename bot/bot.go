@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -44,6 +46,20 @@ type AIBot struct {
 	gallery galleryPublisher
 	// galleryWG tracks in-flight gallery publishes.
 	galleryWG sync.WaitGroup
+
+	// readyOnce makes the startup notice go out once per process: discordgo
+	// fires Ready again after every reconnect.
+	readyOnce sync.Once
+
+	// lifeMu guards draining; inflight counts handlers admitted by
+	// beginRequest and not yet finished.
+	lifeMu   sync.Mutex
+	draining bool
+	inflight sync.WaitGroup
+	// handlerCtx is the base of every message handler's context; Drain
+	// cancels it when the wait times out. Created lazily by beginRequest.
+	handlerCtx    context.Context
+	handlerCancel context.CancelFunc
 }
 
 // promptFile is the on-disk format of prompts/danbo.json.
@@ -136,6 +152,18 @@ const (
 	intentEdit
 )
 
+// maxEditSourceBytes is the size at which a source image is refused for an
+// edit. openai-go documents the GPT image models (gpt-image-1, used for edits
+// here) as taking a png, webp or jpg "less than 50MB" per image, so a source of
+// this many bytes or more is too large. Sized images are checked against it,
+// and bodies are read through a limit of the same size.
+const maxEditSourceBytes = 50_000_000
+
+// errSourceImageTooLarge is returned when the source image to edit is at or
+// over maxEditSourceBytes. The message is shown to the user as is.
+var errSourceImageTooLarge = newUserError("That image is too large to edit (the limit is 50MB).",
+	errors.New("source image too large"))
+
 // classifyMessage decides what a message is asking for and returns the prompt
 // to send for it. botID is stripped from the prompt; hasSourceImage reports
 // whether an image to edit is available.
@@ -154,7 +182,7 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 		return intentEdit, stripEditTriggers(sanitizedUserPrompt)
 	case wantsDraw:
 		// Strip the prompt prefix out of the message
-		return intentDraw, strings.ReplaceAll(strings.ToLower(content), "draw me a picture of", "")
+		return intentDraw, stripDrawTriggers(sanitizedUserPrompt)
 	default:
 		return intentChat, sanitizedUserPrompt
 	}
@@ -164,7 +192,13 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 // own deadline so a hung upstream cannot pin the handler goroutine forever.
 func (b *AIBot) messageCreate(_ *discordgo.Session, m *discordgo.MessageCreate) {
 	defer recoverHandler("messageCreate")
-	ctx, cancel := withTimeout(context.Background(), b.timeouts.Request)
+	base, ok := b.beginRequest()
+	if !ok {
+		slog.Default().WithGroup("messageCreate").Info("Shutting down; ignoring new message")
+		return
+	}
+	defer b.inflight.Done()
+	ctx, cancel := withTimeout(base, b.timeouts.Request)
 	defer cancel()
 	b.handleMessage(ctx, m)
 }
@@ -229,19 +263,60 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 		err = b.handleCompletionPrompt(ctx, responseChannel, prompt, threadPromptContext, m)
 	}
 	if err != nil {
-		b.reportError(ctx, span, responseChannel, failureMessage(intent, err), err)
+		b.reportError(ctx, span, responseChannel, failureMessage(err), err)
 		return
 	}
 	span.SetStatus(codes.Ok, "Success")
 }
 
-// failureMessage is the text posted to the channel when handling a message of
-// the given intent failed with err.
-func failureMessage(intent messageIntent, err error) string {
-	if intent == intentChat {
-		return "Whoops something went wrong processing that"
+// User-facing failure messages. The full error goes to the logs and spans only.
+const (
+	msgInvalidRequest = "OpenAI couldn't process that request. It may have been blocked by its content policy, so try rewording it."
+	msgBusy           = "I'm a bit busy right now, please try again in a minute."
+	msgGeneric        = "Whoops, something went wrong processing that. Please try again."
+)
+
+// userError is an error whose message is safe and useful to show to the user.
+// Wrap with newUserError; detect with errors.As.
+type userError struct {
+	msg string
+	err error
+}
+
+func (e *userError) Error() string {
+	if e.err == nil {
+		return e.msg
 	}
-	return fmt.Sprintf("I fucked that up and threw it away. Sorry. (%s)", err.Error())
+	return e.err.Error()
+}
+func (e *userError) Unwrap() error       { return e.err }
+func (e *userError) UserMessage() string { return e.msg }
+
+// newUserError returns err annotated with a message to show the user.
+func newUserError(msg string, err error) error { return &userError{msg: msg, err: err} }
+
+// failureMessage is the text posted to the channel when handling a message
+// failed with err. It never includes the error's own text.
+func failureMessage(err error) string {
+	var ue *userError
+	if errors.As(err, &ue) {
+		return ue.UserMessage()
+	}
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		switch {
+		case apiErr.StatusCode == http.StatusTooManyRequests,
+			apiErr.StatusCode == http.StatusServiceUnavailable,
+			apiErr.StatusCode == 529,
+			apiErr.Code == "rate_limit_exceeded", apiErr.Code == "server_is_overloaded":
+			if apiErr.Code != "insufficient_quota" {
+				return msgBusy
+			}
+		case apiErr.Code == "content_policy_violation", apiErr.Code == "moderation_blocked":
+			return msgInvalidRequest
+		}
+	}
+	return msgGeneric
 }
 
 // reportError marks the span as failed and tells the channel that the request
@@ -261,9 +336,60 @@ func (b *AIBot) reportError(ctx context.Context, span trace.Span, channel, userM
 func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	defer recoverHandler("ReadyHandler")
 	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
-	err := b.sendMessage(context.Background(), "1091532074495787049", "Gah! I'm awake! How long was I out?!")
-	if err != nil {
-		slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
+	// Ready fires again on every reconnect; only announce the first one.
+	b.readyOnce.Do(func() {
+		err := b.sendMessage(context.Background(), "1091532074495787049", "Gah! I'm awake! How long was I out?!")
+		if err != nil {
+			slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
+		}
+	})
+}
+
+// beginRequest admits one handler and returns the context it should derive
+// from. It returns false once draining has begun; otherwise the caller must
+// call b.inflight.Done when finished.
+func (b *AIBot) beginRequest() (context.Context, bool) {
+	b.lifeMu.Lock()
+	defer b.lifeMu.Unlock()
+	if b.draining {
+		return nil, false
+	}
+	if b.handlerCtx == nil {
+		b.handlerCtx, b.handlerCancel = context.WithCancel(context.Background())
+	}
+	b.inflight.Add(1)
+	return b.handlerCtx, true
+}
+
+// Drain stops the bot accepting new messages and waits for in-flight handlers
+// to finish, or for ctx to expire, in which case the remaining handlers'
+// contexts are cancelled so they stop. It returns ctx's error if handlers
+// were still running.
+func (b *AIBot) Drain(ctx context.Context) error {
+	b.lifeMu.Lock()
+	b.draining = true
+	b.lifeMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		b.inflight.Wait()
+		// Gallery publishes are only started from inside an admitted handler,
+		// so none can begin once the handlers above have finished. They are
+		// best-effort, but let the ones already running finish within the
+		// drain budget rather than dropping them at exit.
+		b.galleryWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		b.lifeMu.Lock()
+		if b.handlerCancel != nil {
+			b.handlerCancel()
+		}
+		b.lifeMu.Unlock()
+		return ctx.Err()
 	}
 }
 
@@ -288,11 +414,11 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 
 	// Request the image(s) from openAI
 	imageRequest := openai.ImageGenerateParams{
-		Prompt: fullPrompt,
-		N:      openai.Int(1),
-		User:   openai.String(m.Author.ID),
-		Size:   openai.ImageGenerateParamsSize1024x1024,
-		Model:  openai.ImageModelGPTImage2,
+		Prompt:           fullPrompt,
+		N:                openai.Int(1),
+		SafetyIdentifier: openai.String(m.Author.ID),
+		Size:             openai.ImageGenerateParamsSize1024x1024,
+		Model:            imageGenerateModel,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(imageRequest.Model)),
@@ -461,7 +587,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		slog.Int("bytes", len(srcBytes)),
 		slog.String("content_type", srcContentType))
 	if srcContentType == "" {
-		return fmt.Errorf("source image is not a supported format (png/jpeg/webp)")
+		return newUserError("That image isn't a supported format. Please use png, jpeg or webp.", fmt.Errorf("source image is not a supported format (png/jpeg/webp)"))
 	}
 
 	fullPrompt := prompt
@@ -473,12 +599,12 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	// without it the form part is sent as application/octet-stream and the Edit
 	// endpoint rejects it. openai.File wires both onto the io.Reader.
 	editRequest := openai.ImageEditParams{
-		Image:  openai.ImageEditParamsImageUnion{OfFile: openai.File(bytes.NewReader(srcBytes), srcFilename, srcContentType)},
-		Prompt: fullPrompt,
-		N:      openai.Int(1),
-		User:   openai.String(m.Author.ID),
-		Size:   openai.ImageEditParamsSize1024x1024,
-		Model:  openai.ImageModelGPTImage1,
+		Image:            openai.ImageEditParamsImageUnion{OfFile: openai.File(bytes.NewReader(srcBytes), srcFilename, srcContentType)},
+		Prompt:           fullPrompt,
+		N:                openai.Int(1),
+		SafetyIdentifier: openai.String(m.Author.ID),
+		Size:             openai.ImageEditParamsSize1024x1024,
+		Model:            imageEditModel,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(editRequest.Model)),
@@ -508,23 +634,35 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 }
 
 // fetchSourceImage downloads the image to edit. The deadline covers both the
-// request and reading the body.
+// request and reading the body. A source at or over maxEditSourceBytes is
+// refused: first by its reported length when there is one, then by reading at
+// most maxEditSourceBytes, so a body with no length cannot grow without bound.
 func (b *AIBot) fetchSourceImage(ctx context.Context, sourceURL string) ([]byte, error) {
 	fetchCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
 	defer cancel()
 
-	src, _, err := b.imageStorage.GetImageFromURL(fetchCtx, sourceURL)
+	src, length, err := b.imageStorage.GetImageFromURL(fetchCtx, sourceURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch source image: %w", err)
 	}
 	defer func() { _ = src.Close() }()
 
+	// length is -1 when the response had no Content-Length.
+	if length >= maxEditSourceBytes {
+		return nil, errSourceImageTooLarge
+	}
+
 	// The Edit endpoint sends the image as multipart form data, which means the
 	// SDK reads the whole body up front — buffer it here so we can pass an
 	// io.Reader that won't get drained partway through.
-	srcBytes, err := io.ReadAll(src)
+	srcBytes, err := io.ReadAll(io.LimitReader(src, maxEditSourceBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read source image: %w", err)
+	}
+	// Reading stopped at the limit, so a full buffer means the body was at
+	// least that big.
+	if len(srcBytes) >= maxEditSourceBytes {
+		return nil, errSourceImageTooLarge
 	}
 	return srcBytes, nil
 }
@@ -592,6 +730,16 @@ func isImageAttachment(att *discordgo.MessageAttachment) bool {
 		strings.HasSuffix(lower, ".webp")
 }
 
+// stripDrawTriggers removes the draw triggers from a prompt, keeping the
+// user's original case.
+func stripDrawTriggers(prompt string) string {
+	out := strings.ReplaceAll(prompt, "🎨", "")
+	out = drawPhrase.ReplaceAllString(out, "")
+	return strings.TrimSpace(out)
+}
+
+var drawPhrase = regexp.MustCompile(`(?i)draw me a picture of`)
+
 func stripEditTriggers(prompt string) string {
 	out := strings.ReplaceAll(prompt, "✏️", "")
 	out = strings.ReplaceAll(out, "edit:", "")
@@ -625,8 +773,9 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	addMsg("user", sanitizedUserPrompt)
 
 	request := responses.ResponseNewParams{
-		Model:        openai.ChatModelGPT4oMini,
+		Model:        chatModel,
 		Instructions: openai.String(b.systemInstructions),
+		Reasoning:    shared.ReasoningParam{Effort: chatReasoningEffort},
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: inputItems,
 		},
@@ -739,10 +888,10 @@ func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 	}
 }
 
-func (b *AIBot) Shutdown() {
-	// The bot context may already be cancelled during shutdown; the goodbye
-	// message still gets its own Discord deadline.
-	err := b.sendMessage(context.WithoutCancel(b.botCtx), "1091532074495787049", "Here I go, shutting down again!")
+// Shutdown tells the operator the bot is going away. ctx bounds the goodbye
+// message; the bot context is not used for it as it may already be cancelled.
+func (b *AIBot) Shutdown(ctx context.Context) {
+	err := b.sendMessage(ctx, "1091532074495787049", "Here I go, shutting down again!")
 	_, span := otel.GetTracerProvider().Tracer("AIBot").Start(b.botCtx, "Shutdown")
 	span.RecordError(err)
 	span.End()
