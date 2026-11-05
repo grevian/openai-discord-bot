@@ -49,6 +49,10 @@ type AIBot struct {
 	lifeMu   sync.Mutex
 	draining bool
 	inflight sync.WaitGroup
+	// handlerCtx is the base of every message handler's context; Drain
+	// cancels it when the wait times out. Created lazily by beginRequest.
+	handlerCtx    context.Context
+	handlerCancel context.CancelFunc
 }
 
 // promptFile is the on-disk format of prompts/danbo.json.
@@ -164,12 +168,13 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 // own deadline so a hung upstream cannot pin the handler goroutine forever.
 func (b *AIBot) messageCreate(_ *discordgo.Session, m *discordgo.MessageCreate) {
 	defer recoverHandler("messageCreate")
-	if !b.beginRequest() {
+	base, ok := b.beginRequest()
+	if !ok {
 		slog.Default().WithGroup("messageCreate").Info("Shutting down; ignoring new message")
 		return
 	}
 	defer b.inflight.Done()
-	ctx, cancel := withTimeout(context.Background(), b.timeouts.Request)
+	ctx, cancel := withTimeout(base, b.timeouts.Request)
 	defer cancel()
 	b.handleMessage(ctx, m)
 }
@@ -275,21 +280,26 @@ func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	})
 }
 
-// beginRequest admits one handler. It returns false once draining has begun;
-// otherwise the caller must call b.inflight.Done when finished.
-func (b *AIBot) beginRequest() bool {
+// beginRequest admits one handler and returns the context it should derive
+// from. It returns false once draining has begun; otherwise the caller must
+// call b.inflight.Done when finished.
+func (b *AIBot) beginRequest() (context.Context, bool) {
 	b.lifeMu.Lock()
 	defer b.lifeMu.Unlock()
 	if b.draining {
-		return false
+		return nil, false
+	}
+	if b.handlerCtx == nil {
+		b.handlerCtx, b.handlerCancel = context.WithCancel(context.Background())
 	}
 	b.inflight.Add(1)
-	return true
+	return b.handlerCtx, true
 }
 
 // Drain stops the bot accepting new messages and waits for in-flight handlers
-// to finish, or for ctx to expire. It returns ctx's error if handlers were
-// still running.
+// to finish, or for ctx to expire, in which case the remaining handlers'
+// contexts are cancelled so they stop. It returns ctx's error if handlers
+// were still running.
 func (b *AIBot) Drain(ctx context.Context) error {
 	b.lifeMu.Lock()
 	b.draining = true
@@ -304,6 +314,11 @@ func (b *AIBot) Drain(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
+		b.lifeMu.Lock()
+		if b.handlerCancel != nil {
+			b.handlerCancel()
+		}
+		b.lifeMu.Unlock()
 		return ctx.Err()
 	}
 }

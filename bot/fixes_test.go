@@ -386,7 +386,7 @@ func TestReadyAnnouncesOncePerProcess(t *testing.T) {
 
 func TestDrainWaitsForInflightAndRejectsNew(t *testing.T) {
 	tb := newTestBot(t)
-	if !tb.bot.beginRequest() {
+	if _, ok := tb.bot.beginRequest(); !ok {
 		t.Fatal("request rejected before drain")
 	}
 	drained := make(chan error, 1)
@@ -415,10 +415,15 @@ func TestDrainWaitsForInflightAndRejectsNew(t *testing.T) {
 
 func TestDrainTimesOut(t *testing.T) {
 	tb := newTestBot(t)
-	tb.bot.beginRequest() // never finishes
+	handlerCtx, _ := tb.bot.beginRequest() // never finishes on its own
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	if err := tb.bot.Drain(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want deadline exceeded, got %v", err)
+	}
+	select {
+	case <-handlerCtx.Done():
+	default:
+		t.Fatal("leftover handler context was not cancelled")
 	}
 }
