@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"openai-discord-bot/bot/storage"
+	"openai-discord-bot/gallery"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
@@ -28,6 +29,13 @@ type threadStore interface {
 type imageStore interface {
 	StoreImage(ctx context.Context, groupId string, reader io.Reader, contentLength int64) (string, error)
 	GetImageFromURL(ctx context.Context, URL string) (io.ReadCloser, int64, error)
+}
+
+// galleryPublisher adds generated images to the public gallery.
+// *gallery.Gallery satisfies it. It decides eligibility itself (DMs and
+// excluded guilds are ignored), so the bot passes every image.
+type galleryPublisher interface {
+	Publish(ctx context.Context, s gallery.Submission) error
 }
 
 // imageAPI is the subset of the OpenAI image service the bot uses.
@@ -74,9 +82,10 @@ func (s sessionDiscord) StateChannel(channelID string) (*discordgo.Channel, erro
 
 // Compile-time checks that the production types satisfy the interfaces.
 var (
-	_ threadStore  = (*storage.Storage)(nil)
-	_ imageStore   = (*storage.ImageStorage)(nil)
-	_ imageAPI     = (*openai.ImageService)(nil)
-	_ responsesAPI = (*responses.ResponseService)(nil)
-	_ discordAPI   = sessionDiscord{}
+	_ threadStore      = (*storage.Storage)(nil)
+	_ imageStore       = (*storage.ImageStorage)(nil)
+	_ galleryPublisher = (*gallery.Gallery)(nil)
+	_ imageAPI         = (*openai.ImageService)(nil)
+	_ responsesAPI     = (*responses.ResponseService)(nil)
+	_ discordAPI       = sessionDiscord{}
 )
