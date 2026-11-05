@@ -45,7 +45,7 @@ jobs:
 
   govulncheck:
     name: govulncheck
-    if: ${{ inputs.run-govulncheck != false }}
+    if: ${{ github.event_name == 'pull_request' || inputs.run-govulncheck }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
