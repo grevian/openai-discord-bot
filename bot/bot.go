@@ -128,6 +128,18 @@ const (
 	intentEdit
 )
 
+// maxEditSourceBytes is the size at which a source image is refused for an
+// edit. openai-go documents the GPT image models (gpt-image-1, used for edits
+// here) as taking a png, webp or jpg "less than 50MB" per image, so a source of
+// this many bytes or more is too large. Sized images are checked against it,
+// and bodies are read through a limit of the same size.
+const maxEditSourceBytes = 50_000_000
+
+// errSourceImageTooLarge is returned when the source image to edit is at or
+// over maxEditSourceBytes. The message is shown to the user as is.
+var errSourceImageTooLarge = newUserError("That image is too large to edit (the limit is 50MB).",
+	errors.New("source image too large"))
+
 // classifyMessage decides what a message is asking for and returns the prompt
 // to send for it. botID is stripped from the prompt; hasSourceImage reports
 // whether an image to edit is available.
@@ -502,23 +514,35 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 }
 
 // fetchSourceImage downloads the image to edit. The deadline covers both the
-// request and reading the body.
+// request and reading the body. A source at or over maxEditSourceBytes is
+// refused: first by its reported length when there is one, then by reading at
+// most maxEditSourceBytes, so a body with no length cannot grow without bound.
 func (b *AIBot) fetchSourceImage(ctx context.Context, sourceURL string) ([]byte, error) {
 	fetchCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
 	defer cancel()
 
-	src, _, err := b.imageStorage.GetImageFromURL(fetchCtx, sourceURL)
+	src, length, err := b.imageStorage.GetImageFromURL(fetchCtx, sourceURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch source image: %w", err)
 	}
 	defer func() { _ = src.Close() }()
 
+	// length is -1 when the response had no Content-Length.
+	if length >= maxEditSourceBytes {
+		return nil, errSourceImageTooLarge
+	}
+
 	// The Edit endpoint sends the image as multipart form data, which means the
 	// SDK reads the whole body up front — buffer it here so we can pass an
 	// io.Reader that won't get drained partway through.
-	srcBytes, err := io.ReadAll(src)
+	srcBytes, err := io.ReadAll(io.LimitReader(src, maxEditSourceBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read source image: %w", err)
+	}
+	// Reading stopped at the limit, so a full buffer means the body was at
+	// least that big.
+	if len(srcBytes) >= maxEditSourceBytes {
+		return nil, errSourceImageTooLarge
 	}
 	return srcBytes, nil
 }
