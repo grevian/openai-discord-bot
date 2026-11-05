@@ -12,11 +12,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
+	"sync"
 
 	"openai-discord-bot/bot/storage"
 
-	"github.com/avast/retry-go/v4"
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
@@ -37,6 +38,7 @@ type AIBot struct {
 	basePrompt          []storage.ConversationMessage
 	storage             threadStore
 	imageStorage        imageStore
+	timeouts            timeouts
 }
 
 // promptFile is the on-disk format of prompts/danbo.json.
@@ -91,6 +93,7 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 		basePrompt:          prompt.Examples,
 		storage:             threadStorage,
 		imageStorage:        imageStorage,
+		timeouts:            defaultTimeouts(),
 	}
 
 	// TODO Wire up more handlers
@@ -98,23 +101,6 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 	discordSession.AddHandler(bot.messageCreate)
 
 	return bot
-}
-
-// decodedBase64Length returns the number of bytes a standard-base64 string will
-// decode to, without performing the decode. S3 needs the content length up
-// front, and we want to avoid buffering the decoded image just to measure it.
-func decodedBase64Length(s string) (int64, error) {
-	if len(s)%4 != 0 {
-		return 0, fmt.Errorf("base64 length %d is not a multiple of 4", len(s))
-	}
-	padding := 0
-	switch {
-	case strings.HasSuffix(s, "=="):
-		padding = 2
-	case strings.HasSuffix(s, "="):
-		padding = 1
-	}
-	return int64(len(s)/4*3 - padding), nil
 }
 
 func userWasMentioned(user *discordgo.User, mentioned []*discordgo.User) bool {
@@ -164,9 +150,25 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 	}
 }
 
-// messageCreate is the Discord MessageCreate handler.
+// messageCreate is the Discord MessageCreate handler. Each message gets its
+// own deadline so a hung upstream cannot pin the handler goroutine forever.
 func (b *AIBot) messageCreate(_ *discordgo.Session, m *discordgo.MessageCreate) {
-	b.handleMessage(context.Background(), m)
+	defer recoverHandler("messageCreate")
+	ctx, cancel := withTimeout(context.Background(), b.timeouts.Request)
+	defer cancel()
+	b.handleMessage(ctx, m)
+}
+
+// recoverHandler stops a panic in a Discord event handler from crashing the
+// process: discordgo runs handlers in plain goroutines without recover().
+// Call it deferred, directly, at the top of each handler.
+func recoverHandler(handler string) {
+	if r := recover(); r != nil {
+		slog.Default().Error("recovered from panic in Discord handler",
+			slog.String("handler", handler),
+			slog.Any("panic", r),
+			slog.String("stack", string(debug.Stack())))
+	}
 }
 
 func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
@@ -201,9 +203,11 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	logger.DebugContext(ctx, "loaded thread context", slog.Int("thread_length", len(threadPromptContext)))
 
 	// Let users know we're "typing", the call to OpenAI can take a few seconds
-	_ = b.discord.ChannelTyping(responseChannel, discordgo.WithContext(ctx))
+	typingOpt, cancelTyping := b.discordCtx(ctx)
+	_ = b.discord.ChannelTyping(responseChannel, typingOpt)
+	cancelTyping()
 
-	sourceImageURL := b.findEditSourceImage(m)
+	sourceImageURL := b.findEditSourceImage(ctx, m)
 	intent, prompt := classifyMessage(m.Content, self.ID, sourceImageURL != "")
 
 	switch intent {
@@ -231,11 +235,13 @@ func failureMessage(intent messageIntent, err error) string {
 }
 
 // reportError marks the span as failed and tells the channel that the request
-// failed. A failure to send that notice is recorded and logged as well.
+// failed. A failure to send that notice is recorded and logged as well. The
+// notice gets its own deadline, so it is still sent when the failure was the
+// request running out of time.
 func (b *AIBot) reportError(ctx context.Context, span trace.Span, channel, userMessage string, err error) {
 	span.RecordError(err)
 	span.SetStatus(codes.Error, err.Error())
-	_, discordErr := b.discord.ChannelMessageSend(channel, userMessage, discordgo.WithContext(ctx))
+	discordErr := b.sendMessage(context.WithoutCancel(ctx), channel, userMessage)
 	if discordErr != nil {
 		span.RecordError(discordErr)
 		slog.Default().WithGroup("messageCreate").ErrorContext(ctx, "Failed to notify discord channel of the error", slog.Any("error", discordErr))
@@ -243,8 +249,9 @@ func (b *AIBot) reportError(ctx context.Context, span trace.Span, channel, userM
 }
 
 func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
+	defer recoverHandler("ReadyHandler")
 	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
-	_, err := b.discord.ChannelMessageSend("1091532074495787049", "Gah! I'm awake! How long was I out?!")
+	err := b.sendMessage(context.Background(), "1091532074495787049", "Gah! I'm awake! How long was I out?!")
 	if err != nil {
 		slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
 	}
@@ -257,7 +264,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	defer span.End()
 
 	// Record the prompt to our thread context
-	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), prompt)
+	err = b.addThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), prompt)
 	if err != nil {
 		return fmt.Errorf("failed to record drawing prompt: %w", err)
 	}
@@ -281,15 +288,21 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		attribute.String("model", string(imageRequest.Model)),
 		attribute.String("size", string(imageRequest.Size)),
 	)
-	responseImage, err := b.images.Generate(ctx, imageRequest)
+	openaiCtx, cancel := withTimeout(ctx, b.timeouts.OpenAIImage)
+	responseImage, err := b.images.Generate(openaiCtx, imageRequest)
+	cancel()
 	if err != nil {
 		if isFatalOpenAIError(err) {
 			b.handleFatalOpenAIError(ctx, err)
 		}
 		return fmt.Errorf("failed to get image from openai: %w", err)
 	}
+	b64, err := firstImageB64(responseImage)
+	if err != nil {
+		return err
+	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, responseImage.Data[0].B64JSON, "a picture I drawed", m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "a picture I drawed", m); err != nil {
 		return err
 	}
 
@@ -297,61 +310,81 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	return nil
 }
 
-// dispatchGeneratedImage takes a base64 PNG from the OpenAI image API, streams
+// firstImageB64 returns the first image in an image API response, or an error
+// when the response carries none.
+func firstImageB64(resp *openai.ImagesResponse) (string, error) {
+	if resp == nil || len(resp.Data) == 0 || resp.Data[0].B64JSON == "" {
+		return "", errors.New("openai returned no image")
+	}
+	return resp.Data[0].B64JSON, nil
+}
+
+// dispatchGeneratedImage takes a base64 PNG from the OpenAI image API, sends
 // it to Discord as a reply attachment, and concurrently uploads a copy to S3 +
 // records the resulting URL in thread context. Shared between the generation
 // and edit paths.
+//
+// The image is decoded once into memory (about 1-2 MB) and both uploads read
+// their own reader over those bytes, so an S3 failure cannot truncate what
+// Discord receives, and a Discord failure cannot block the S3 upload. Both
+// finish before this returns.
 func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, responseChannel, b64, content string, m *discordgo.MessageCreate) error {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
-	imageLength, err := decodedBase64Length(b64)
+	image, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
 		return fmt.Errorf("invalid base64 image from openai: %w", err)
 	}
-	logger.DebugContext(ctx, "image retrieval", slog.Int64("image_length", imageLength))
+	logger.DebugContext(ctx, "image retrieval", slog.Int("image_length", len(image)))
 
-	// Tee the image reading stream, so that we can upload it to discord and S3 at the same time
-	pipeReader, pipeWriter := io.Pipe()
-	imageDecoder := base64.NewDecoder(base64.StdEncoding, strings.NewReader(b64))
-	imageTeeReader := io.TeeReader(imageDecoder, pipeWriter)
-
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
-		defer func() {
-			pipeErr := pipeWriter.Close()
-			if pipeErr != nil {
-				span.RecordError(pipeErr)
-				logger.ErrorContext(ctx, "failed to close the pipeWriter", slog.Any("error", pipeErr))
-			}
-		}()
-
-		imageKey, err := b.imageStorage.StoreImage(ctx, m.GuildID, imageTeeReader, imageLength)
-		if err != nil {
-			span.RecordError(err)
-			logger.ErrorContext(ctx, "failed to store a copy of the image in S3", slog.Any("error", err))
-			return
-		}
-
-		imageUrl := fmt.Sprintf("https://sillybullshit.click/%s", imageKey)
-
-		if err := b.storage.AddThreadMessage(ctx, responseChannel, "Bot", imageUrl); err != nil {
-			span.RecordError(err)
-			logger.ErrorContext(ctx, "failed to record image URL in thread context", slog.Any("error", err))
-		}
+		defer wg.Done()
+		// This goroutine is outside the handler's recover, so it needs its own.
+		defer recoverHandler("archiveImage")
+		b.archiveImage(ctx, span, responseChannel, m.GuildID, image)
 	}()
 
+	opt, cancel := b.discordCtx(ctx)
 	_, err = b.discord.ChannelMessageSendComplex(responseChannel, &discordgo.MessageSend{
 		Content:   content,
 		Reference: m.Reference(),
 		File: &discordgo.File{
 			Name:        "danbot-drawing.png",
 			ContentType: "image/png",
-			Reader:      pipeReader,
+			Reader:      bytes.NewReader(image),
 		},
-	}, discordgo.WithContext(ctx))
+	}, opt)
+	cancel()
+	wg.Wait()
 	if err != nil {
 		return fmt.Errorf("failed to send embedded image to discord: %w", err)
 	}
 	return nil
+}
+
+// archiveImage stores a copy of a generated image in S3 and records its public
+// URL in the thread context. Failures are recorded and logged, not returned:
+// the user already has the image in Discord.
+func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID string, image []byte) {
+	logger := slog.Default().WithGroup("dispatchGeneratedImage")
+
+	storeCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
+	imageKey, err := b.imageStorage.StoreImage(storeCtx, guildID, bytes.NewReader(image), int64(len(image)))
+	cancel()
+	if err != nil {
+		span.RecordError(err)
+		logger.ErrorContext(ctx, "failed to store a copy of the image in S3", slog.Any("error", err))
+		return
+	}
+
+	imageUrl := fmt.Sprintf("https://sillybullshit.click/%s", imageKey)
+
+	if err := b.addThreadMessage(ctx, responseChannel, "Bot", imageUrl); err != nil {
+		span.RecordError(err)
+		logger.ErrorContext(ctx, "failed to record image URL in thread context", slog.Any("error", err))
+	}
 }
 
 // handleImageEditMessage takes a prompt and a URL to an existing image and asks
@@ -364,24 +397,15 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	defer span.End()
 	span.SetAttributes(attribute.String("source_url", sourceURL))
 
-	if err := b.storage.AddThreadMessage(ctx, responseChannel,
+	if err := b.addThreadMessage(ctx, responseChannel,
 		fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID),
 		fmt.Sprintf("edit: %s (source: %s)", prompt, sourceURL)); err != nil {
 		return fmt.Errorf("failed to record edit prompt: %w", err)
 	}
 
-	src, _, err := b.imageStorage.GetImageFromURL(ctx, sourceURL)
+	srcBytes, err := b.fetchSourceImage(ctx, sourceURL)
 	if err != nil {
-		return fmt.Errorf("failed to fetch source image: %w", err)
-	}
-	defer func() { _ = src.Close() }()
-
-	// The Edit endpoint sends the image as multipart form data, which means the
-	// SDK reads the whole body up front — buffer it here so we can pass an
-	// io.Reader that won't get drained partway through.
-	srcBytes, err := io.ReadAll(src)
-	if err != nil {
-		return fmt.Errorf("failed to read source image: %w", err)
+		return err
 	}
 	srcContentType, srcFilename := detectImageType(srcBytes)
 	logger.DebugContext(ctx, "source image fetched",
@@ -412,15 +436,21 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		attribute.String("size", string(editRequest.Size)),
 	)
 
-	responseImage, err := b.images.Edit(ctx, editRequest)
+	openaiCtx, cancel := withTimeout(ctx, b.timeouts.OpenAIImage)
+	responseImage, err := b.images.Edit(openaiCtx, editRequest)
+	cancel()
 	if err != nil {
 		if isFatalOpenAIError(err) {
 			b.handleFatalOpenAIError(ctx, err)
 		}
 		return fmt.Errorf("failed to edit image via openai: %w", err)
 	}
+	b64, err := firstImageB64(responseImage)
+	if err != nil {
+		return err
+	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, responseImage.Data[0].B64JSON, "here ya go", m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "here ya go", m); err != nil {
 		return err
 	}
 
@@ -428,11 +458,33 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	return nil
 }
 
+// fetchSourceImage downloads the image to edit. The deadline covers both the
+// request and reading the body.
+func (b *AIBot) fetchSourceImage(ctx context.Context, sourceURL string) ([]byte, error) {
+	fetchCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
+	defer cancel()
+
+	src, _, err := b.imageStorage.GetImageFromURL(fetchCtx, sourceURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch source image: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+
+	// The Edit endpoint sends the image as multipart form data, which means the
+	// SDK reads the whole body up front — buffer it here so we can pass an
+	// io.Reader that won't get drained partway through.
+	srcBytes, err := io.ReadAll(src)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read source image: %w", err)
+	}
+	return srcBytes, nil
+}
+
 // findEditSourceImage returns a URL to an image to be used as the source for an
 // edit, preferring an attachment on the triggering message, then falling back
 // to an attachment on the message it's replying to (if that message came from
 // us). Returns "" when no candidate exists.
-func (b *AIBot) findEditSourceImage(m *discordgo.MessageCreate) string {
+func (b *AIBot) findEditSourceImage(ctx context.Context, m *discordgo.MessageCreate) string {
 	for _, att := range m.Attachments {
 		if isImageAttachment(att) {
 			return att.URL
@@ -443,7 +495,9 @@ func (b *AIBot) findEditSourceImage(m *discordgo.MessageCreate) string {
 	if ref == nil && m.MessageReference != nil && m.MessageReference.MessageID != "" {
 		// The gateway doesn't always inline ReferencedMessage — older messages
 		// or cache misses fall back to an explicit fetch.
-		fetched, err := b.discord.ChannelMessage(m.MessageReference.ChannelID, m.MessageReference.MessageID)
+		opt, cancel := b.discordCtx(ctx)
+		fetched, err := b.discord.ChannelMessage(m.MessageReference.ChannelID, m.MessageReference.MessageID, opt)
+		cancel()
 		if err == nil {
 			ref = fetched
 		}
@@ -529,52 +583,41 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 		},
 	}
 
-	// Text completions seem to fail shockingly often, so we set them up to retry if necessary
-	var responseText string
-	err = retry.Do(
-		func() error {
-			response, err := b.responses.New(ctx, request)
-			if err != nil {
-				if isFatalOpenAIError(err) {
-					b.handleFatalOpenAIError(ctx, err)
-					return retry.Unrecoverable(err)
-				}
-				logger.ErrorContext(ctx, "Failed to retrieve completion from OpenAI", slog.Any("error", err))
-				return err
-			}
-			responseText = response.OutputText()
-			if responseText == "" {
-				logger.WarnContext(ctx, "Empty response text from OpenAI", slog.Any("response", response))
-				return errors.New("received an empty response from OpenAI")
-			}
-			return nil
-		},
-		retry.Attempts(3),
-		retry.OnRetry(func(n uint, err error) {
-			span.AddEvent("retry creating chat completion", trace.WithAttributes(attribute.Int("retry", int(n))))
-			span.RecordError(err)
-		}),
-	)
+	// Transient failures (429, 5xx, connection errors) are retried by the
+	// OpenAI SDK itself (2 retries by default). Don't add a second retry layer
+	// on top: that multiplies the calls, and it retried non-retryable 4xx too.
+	openaiCtx, cancel := withTimeout(ctx, b.timeouts.OpenAIText)
+	response, err := b.responses.New(openaiCtx, request)
+	cancel()
 	if err != nil {
+		if isFatalOpenAIError(err) {
+			b.handleFatalOpenAIError(ctx, err)
+		}
+		logger.ErrorContext(ctx, "Failed to retrieve completion from OpenAI", slog.Any("error", err))
 		return fmt.Errorf("failed to get response from openai: %w", err)
+	}
+	responseText := response.OutputText()
+	if responseText == "" {
+		logger.WarnContext(ctx, "Empty response text from OpenAI", slog.Any("response", response))
+		return errors.New("failed to get response from openai: received an empty response")
 	}
 
 	// TODO It's weird that we're modifying the stored thread state here, but loaded it elsewhere
-	err = b.storage.AddThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+sanitizedUserPrompt)
+	err = b.addThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+sanitizedUserPrompt)
 	if err != nil {
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
 		span.RecordError(warnErr)
 		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", warnErr))
 	}
 
-	err = b.storage.AddThreadMessage(ctx, responseChannel, "Bot", responseText)
+	err = b.addThreadMessage(ctx, responseChannel, "Bot", responseText)
 	if err != nil {
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
 		span.RecordError(warnErr)
 		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", warnErr))
 	}
 
-	_, err = b.discord.ChannelMessageSend(responseChannel, responseText, discordgo.WithContext(ctx))
+	err = b.sendMessage(ctx, responseChannel, responseText)
 	if err != nil {
 		return fmt.Errorf("failed to respond to discord channel: %w", err)
 	}
@@ -599,10 +642,12 @@ func (b *AIBot) handleThreading(ctx context.Context, m *discordgo.MessageCreate)
 
 	// But if the user requested a thread, but we're not in one yet, create it
 	if wantThreaded && !isThreaded {
+		opt, cancel := b.discordCtx(ctx)
 		ch, err := b.discord.MessageThreadStartComplex(m.ChannelID, m.ID, &discordgo.ThreadStart{
 			Name:                fmt.Sprintf("Conversation with %s", m.Author.Username),
 			AutoArchiveDuration: 60,
-		}, discordgo.WithContext(ctx))
+		}, opt)
+		cancel()
 		if err != nil {
 			errResponse = fmt.Errorf("failed to create discord conversation thread: %w", err)
 			return
@@ -614,7 +659,7 @@ func (b *AIBot) handleThreading(ctx context.Context, m *discordgo.MessageCreate)
 	// If we are in a thread, we should load the thread's conversation context
 	if isThreaded {
 		var err error
-		threadContext, err = b.storage.GetThread(ctx, responseChannel)
+		threadContext, err = b.getThread(ctx, responseChannel)
 		if err != nil {
 			// This doesn't have to be fatal, though it may be confusing
 			warnErr := fmt.Errorf("failed to load thread conversation context: %w", err)
@@ -646,7 +691,9 @@ func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 }
 
 func (b *AIBot) Shutdown() {
-	_, err := b.discord.ChannelMessageSend("1091532074495787049", "Here I go, shutting down again!")
+	// The bot context may already be cancelled during shutdown; the goodbye
+	// message still gets its own Discord deadline.
+	err := b.sendMessage(context.WithoutCancel(b.botCtx), "1091532074495787049", "Here I go, shutting down again!")
 	_, span := otel.GetTracerProvider().Tracer("AIBot").Start(b.botCtx, "Shutdown")
 	span.RecordError(err)
 	span.End()

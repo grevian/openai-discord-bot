@@ -391,7 +391,7 @@ func TestFindEditSourceImage(t *testing.T) {
 			tb := newTestBot(t)
 			m := mention("x")
 			tt.setup(tb.discord, m)
-			if got := tb.bot.findEditSourceImage(m); got != tt.want {
+			if got := tb.bot.findEditSourceImage(context.Background(), m); got != tt.want {
 				t.Errorf("findEditSourceImage = %q, want %q", got, tt.want)
 			}
 		})
@@ -415,20 +415,6 @@ func equalStored(a, b []storedMessage) bool {
 		}
 	}
 	return true
-}
-
-func TestChatCompletionRetriesEmptyResponse(t *testing.T) {
-	tb := newTestBot(t)
-	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
-		return textResponse(""), nil
-	}
-	tb.bot.handleMessage(context.Background(), mention("hello"))
-	if n := tb.responses.callCount(); n != 3 {
-		t.Errorf("expected 3 attempts for an empty response, got %d", n)
-	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
-		t.Errorf("unexpected messages %+v", got)
-	}
 }
 
 func TestReadyAndShutdownNotifyOperator(t *testing.T) {

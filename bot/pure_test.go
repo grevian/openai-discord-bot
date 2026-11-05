@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,23 +11,6 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
 )
-
-func TestDecodedBase64Length(t *testing.T) {
-	for _, n := range []int{0, 1, 2, 3, 4, 5, 1000, 1001, 1002} {
-		raw := make([]byte, n)
-		enc := base64.StdEncoding.EncodeToString(raw)
-		got, err := decodedBase64Length(enc)
-		if err != nil {
-			t.Fatalf("len %d: unexpected error %v", n, err)
-		}
-		if got != int64(n) {
-			t.Errorf("len %d: decodedBase64Length(%q) = %d", n, enc, got)
-		}
-	}
-	if _, err := decodedBase64Length("abc"); err == nil {
-		t.Error("expected an error for a length that is not a multiple of 4")
-	}
-}
 
 func TestDetectImageType(t *testing.T) {
 	webp := append([]byte("RIFF\x00\x00\x00\x00WEBPVP"), make([]byte, 16)...)
