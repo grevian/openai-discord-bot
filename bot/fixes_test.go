@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -373,5 +375,110 @@ func TestStalledSourceImageDownloadTimesOut(t *testing.T) {
 	}
 	if sent := tb.discord.sentMessages(); len(sent) != 1 || sent[0].Content != msgGeneric {
 		t.Fatalf("expected a read failure notice, got %+v", sent)
+	}
+}
+
+// --- Source image size limit ----------------------------------------------
+
+// sizedImageStore serves one source image with a caller-chosen reported length,
+// so tests can exercise both the Content-Length check (length known) and the
+// streamed check (length -1, the response had no Content-Length).
+type sizedImageStore struct {
+	*fakeImageStore
+	length int64
+	body   io.Reader
+}
+
+func (s *sizedImageStore) GetImageFromURL(context.Context, string) (io.ReadCloser, int64, error) {
+	return io.NopCloser(s.body), s.length, nil
+}
+
+// zeroReader yields zero bytes forever; wrapped in io.LimitReader it models a
+// large body without allocating it.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+func TestEditRejectsSourceOverEditLimit(t *testing.T) {
+	// The body is a valid PNG followed by padding, so the only thing wrong with
+	// it is its size.
+	oversized := func() io.Reader {
+		return io.MultiReader(bytes.NewReader(pngBytes), io.LimitReader(zeroReader{}, maxEditSourceBytes))
+	}
+	cases := map[string]struct {
+		length int64
+		body   io.Reader
+	}{
+		"content-length over limit":           {maxEditSourceBytes + 1, bytes.NewReader(pngBytes)},
+		"content-length at limit":             {maxEditSourceBytes, bytes.NewReader(pngBytes)},
+		"unknown length, streamed over limit": {-1, oversized()},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tb := newTestBot(t)
+			tb.bot.imageStorage = &sizedImageStore{fakeImageStore: tb.imgStore, length: tc.length, body: tc.body}
+			m := mention("edit: add a hat")
+			m.Attachments = []*discordgo.MessageAttachment{{URL: "https://cdn.example/big.png", Filename: "big.png"}}
+			tb.bot.handleMessage(context.Background(), m)
+
+			if len(tb.images.edited) != 0 {
+				t.Error("an oversized source must not be sent to OpenAI")
+			}
+			if got := tb.discord.sentMessages(); len(got) != 1 || !strings.Contains(got[0].Content, "too large") {
+				t.Errorf("user should be told the image is too large, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestEditAcceptsSourceJustUnderEditLimit(t *testing.T) {
+	tb := newTestBot(t)
+	tb.bot.imageStorage = &sizedImageStore{
+		fakeImageStore: tb.imgStore,
+		length:         maxEditSourceBytes - 1,
+		body:           bytes.NewReader(pngBytes),
+	}
+	tb.images.edit = func(context.Context, openai.ImageEditParams) (*openai.ImagesResponse, error) {
+		return imageResponse(base64.StdEncoding.EncodeToString(pngBytes)), nil
+	}
+	m := mention("edit: add a hat")
+	m.Attachments = []*discordgo.MessageAttachment{{URL: "https://cdn.example/ok.png", Filename: "ok.png"}}
+	tb.bot.handleMessage(context.Background(), m)
+
+	if len(tb.images.edited) != 1 {
+		t.Fatalf("a source under the limit should be edited, got %d Edit calls", len(tb.images.edited))
+	}
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// A source with no Content-Length must not be read past the limit: the
+// streamed body here is twice the limit, and the handler should stop at it.
+func TestStreamedEditSourceReadIsBounded(t *testing.T) {
+	tb := newTestBot(t)
+	body := &countingReader{r: io.MultiReader(bytes.NewReader(pngBytes), io.LimitReader(zeroReader{}, 2*maxEditSourceBytes))}
+	tb.bot.imageStorage = &sizedImageStore{fakeImageStore: tb.imgStore, length: -1, body: body}
+	m := mention("edit: add a hat")
+	m.Attachments = []*discordgo.MessageAttachment{{URL: "https://cdn.example/huge.png", Filename: "huge.png"}}
+	tb.bot.handleMessage(context.Background(), m)
+
+	if body.n > maxEditSourceBytes+1 {
+		t.Errorf("read %d bytes of a streamed source; must stop at %d", body.n, maxEditSourceBytes+1)
+	}
+	if len(tb.images.edited) != 0 {
+		t.Error("an oversized streamed source must not be sent to OpenAI")
 	}
 }

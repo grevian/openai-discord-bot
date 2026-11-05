@@ -41,6 +41,10 @@ func (i *ImageStorage) GetImageFromURL(ctx context.Context, URL string) (io.Read
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Drain a bounded amount so the connection can be reused, then close
+		// the body on every path. Returning without closing leaks the connection.
+		_, _ = io.CopyN(io.Discard, resp.Body, 64<<10)
+		_ = resp.Body.Close()
 		return nil, 0, fmt.Errorf("unexpected response status: %d", resp.StatusCode)
 	}
 
