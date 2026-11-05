@@ -371,7 +371,7 @@ func TestStalledSourceImageDownloadTimesOut(t *testing.T) {
 	if len(tb.images.edited) != 0 {
 		t.Error("no edit should be requested without the source image")
 	}
-	if sent := tb.discord.sentMessages(); len(sent) != 1 || !strings.Contains(sent[0].Content, "failed to read source image") {
+	if sent := tb.discord.sentMessages(); len(sent) != 1 || sent[0].Content != msgGeneric {
 		t.Fatalf("expected a read failure notice, got %+v", sent)
 	}
 }
