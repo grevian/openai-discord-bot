@@ -38,11 +38,6 @@ type AIBot struct {
 	imageStorage        *storage.ImageStorage
 }
 
-func (b *AIBot) Go() error {
-	// TODO Block here? Use a context or a control channel?
-	return nil
-}
-
 // isFatalOpenAIError reports whether err indicates a condition that won't
 // recover on retry: an exhausted quota or a revoked / invalid API key. When
 // true the caller should stop calling OpenAI and trigger process shutdown so
