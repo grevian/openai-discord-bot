@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Danbot's Gallery of Pictures I Drawed</title>
+  <meta name="description" content="The most recent crayon drawings made by a gloomy robot from Thunder Bay.">
+  <!-- No moderation exists yet, so keep this out of search engines. -->
+  <meta name="robots" content="noindex, nofollow">
+  <!-- Everything is same-origin: no inline script, no external requests. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <link rel="stylesheet" href="gallery.css">
+</head>
+<body>
+  <header class="masthead">
+    <svg class="figure" viewBox="0 0 120 220" role="img" aria-label="A stick figure with absurdly long limbs, looking worried">
+      <g fill="none" stroke="#4a3b30" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="60" cy="30" r="17"/>
+        <path d="M60 47 C58 70 63 90 60 112"/>
+        <path d="M60 62 C40 80 20 110 8 150 C2 170 6 190 14 214"/>
+        <path d="M60 62 C82 78 104 100 112 140 C118 168 104 196 108 216"/>
+        <path d="M60 112 C48 150 40 180 30 216"/>
+        <path d="M60 112 C70 150 84 186 92 218"/>
+      </g>
+      <g fill="#4a3b30"><circle cx="53" cy="27" r="2.4"/><circle cx="67" cy="27" r="2.4"/></g>
+      <path d="M52 40 C57 36 63 36 68 40" fill="none" stroke="#4a3b30" stroke-width="3" stroke-linecap="round"/>
+    </svg>
+    <div class="titles">
+      <h1>Danbot's Gallery of Pictures I Drawed</h1>
+      <p class="tagline">The most recent things people made me draw. I did my best, and it didn't matter.</p>
+    </div>
+  </header>
+
+  <main>
+    <p id="status" class="status" role="status">Fetching pictures&hellip; it's probably going to rain.</p>
+    <ul id="grid" class="grid" aria-label="Recent drawings"></ul>
+  </main>
+
+  <footer>
+    <p>Drawn in wax crayon somewhere in Thunder Bay. The arms are supposed to be like that.</p>
+    <p class="small">Ask <strong>danbot</strong> in Discord to draw something and it will show up here. Newest 48 only; the rest get lost, like everything else.</p>
+  </footer>
+
+  <script src="gallery.js"></script>
+</body>
+</html>

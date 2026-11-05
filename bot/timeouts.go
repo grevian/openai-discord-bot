@@ -22,6 +22,8 @@ type timeouts struct {
 	Storage time.Duration
 	// Discord bounds one Discord REST call.
 	Discord time.Duration
+	// Gallery bounds one gallery publish (a handful of small S3 writes).
+	Gallery time.Duration
 }
 
 func defaultTimeouts() timeouts {
@@ -31,6 +33,7 @@ func defaultTimeouts() timeouts {
 		OpenAIImage: 3 * time.Minute,
 		Storage:     30 * time.Second,
 		Discord:     30 * time.Second,
+		Gallery:     20 * time.Second,
 	}
 }
 

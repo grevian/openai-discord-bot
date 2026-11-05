@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"openai-discord-bot/bot/storage"
+	"openai-discord-bot/gallery"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
@@ -28,6 +29,17 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// Settings are the operator-specific values the bot needs at runtime. They
+// are loaded and validated by the config package.
+type Settings struct {
+	// OperatorChannelID is the Discord channel that receives the startup and
+	// shutdown notices.
+	OperatorChannelID string
+	// ImageBaseURL is the public origin that archived images are served from,
+	// without a trailing slash. An image key is appended to it.
+	ImageBaseURL string
+}
 
 type AIBot struct {
 	images              imageAPI
@@ -41,6 +53,12 @@ type AIBot struct {
 	storage             threadStore
 	imageStorage        imageStore
 	timeouts            timeouts
+	operatorChannelID   string
+	imageBaseURL        string
+	// gallery publishes images to the public gallery. Nil disables it.
+	gallery galleryPublisher
+	// galleryWG tracks in-flight gallery publishes.
+	galleryWG sync.WaitGroup
 
 	// readyOnce makes the startup notice go out once per process: discordgo
 	// fires Ready again after every reconnect.
@@ -92,7 +110,7 @@ func isFatalOpenAIError(err error) bool {
 	return apiErr.Code == "insufficient_quota" || apiErr.Code == "invalid_api_key"
 }
 
-func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage) *AIBot {
+func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage, settings Settings) *AIBot {
 	prompt, err := loadPromptFile("prompts/danbo.json")
 	if err != nil {
 		log.Panic(err)
@@ -110,6 +128,8 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 		storage:             threadStorage,
 		imageStorage:        imageStorage,
 		timeouts:            defaultTimeouts(),
+		operatorChannelID:   settings.OperatorChannelID,
+		imageBaseURL:        settings.ImageBaseURL,
 	}
 
 	// TODO Wire up more handlers
@@ -117,6 +137,11 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 	discordSession.AddHandler(bot.messageCreate)
 
 	return bot
+}
+
+// SetGallery enables publishing generated images to the public gallery.
+func (b *AIBot) SetGallery(g galleryPublisher) {
+	b.gallery = g
 }
 
 func userWasMentioned(user *discordgo.User, mentioned []*discordgo.User) bool {
@@ -151,7 +176,7 @@ const maxEditSourceBytes = 50_000_000
 
 // errSourceImageTooLarge is returned when the source image to edit is at or
 // over maxEditSourceBytes. The message is shown to the user as is.
-var errSourceImageTooLarge = newUserError("That image is too large to edit (the limit is 50MB).",
+var errSourceImageTooLarge = newUserError("That image is too large for me to edit (the limit is 50MB). Big files scare me too. Please send a smaller one.",
 	errors.New("source image too large"))
 
 // classifyMessage decides what a message is asking for and returns the prompt
@@ -261,9 +286,9 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 
 // User-facing failure messages. The full error goes to the logs and spans only.
 const (
-	msgInvalidRequest = "OpenAI couldn't process that request. It may have been blocked by its content policy, so try rewording it."
-	msgBusy           = "I'm a bit busy right now, please try again in a minute."
-	msgGeneric        = "Whoops, something went wrong processing that. Please try again."
+	msgInvalidRequest = "OpenAI's content policy blocked that one. I've seen worse in Thunder Bay, but I can't make it. Try rewording it, maybe something less grim."
+	msgBusy           = "Ugh, I'm swamped right now, and I have a feeling it'll stay that way. Please try again in a minute."
+	msgGeneric        = "Gah! Something broke while I was working on that, and it's probably my fault. Please try again."
 )
 
 // userError is an error whose message is safe and useful to show to the user.
@@ -328,7 +353,7 @@ func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
 	// Ready fires again on every reconnect; only announce the first one.
 	b.readyOnce.Do(func() {
-		err := b.sendMessage(context.Background(), "1091532074495787049", "Gah! I'm awake! How long was I out?!")
+		err := b.sendMessage(context.Background(), b.operatorChannelID, "Gah! I'm awake! How long was I out?!")
 		if err != nil {
 			slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
 		}
@@ -363,6 +388,11 @@ func (b *AIBot) Drain(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		b.inflight.Wait()
+		// Gallery publishes are only started from inside an admitted handler,
+		// so none can begin once the handlers above have finished. They are
+		// best-effort, but let the ones already running finish within the
+		// drain budget rather than dropping them at exit.
+		b.galleryWG.Wait()
 		close(done)
 	}()
 	select {
@@ -423,7 +453,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "a picture I drawed", m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "a picture I drawed", prompt, gallery.KindGenerate, m); err != nil {
 		return err
 	}
 
@@ -449,7 +479,7 @@ func firstImageB64(resp *openai.ImagesResponse) (string, error) {
 // their own reader over those bytes, so an S3 failure cannot truncate what
 // Discord receives, and a Discord failure cannot block the S3 upload. Both
 // finish before this returns.
-func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, responseChannel, b64, content string, m *discordgo.MessageCreate) error {
+func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, responseChannel, b64, content, prompt string, kind gallery.Kind, m *discordgo.MessageCreate) error {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
 	image, err := base64.StdEncoding.DecodeString(b64)
@@ -464,7 +494,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 		defer wg.Done()
 		// This goroutine is outside the handler's recover, so it needs its own.
 		defer recoverHandler("archiveImage")
-		b.archiveImage(ctx, span, responseChannel, m.GuildID, image)
+		b.archiveImage(ctx, span, responseChannel, m.GuildID, image, prompt, kind)
 	}()
 
 	opt, cancel := b.discordCtx(ctx)
@@ -487,8 +517,9 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 
 // archiveImage stores a copy of a generated image in S3 and records its public
 // URL in the thread context. Failures are recorded and logged, not returned:
-// the user already has the image in Discord.
-func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID string, image []byte) {
+// the user already has the image in Discord. Once the image is stored it is
+// also offered to the public gallery.
+func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID string, image []byte, prompt string, kind gallery.Kind) {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
 	storeCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
@@ -500,12 +531,50 @@ func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChann
 		return
 	}
 
-	imageUrl := fmt.Sprintf("https://sillybullshit.click/%s", imageKey)
+	b.publishToGallery(ctx, gallery.Submission{
+		GuildID:  guildID,
+		ImageKey: imageKey,
+		Prompt:   b.galleryPrompt(prompt),
+		Kind:     kind,
+	})
+
+	imageUrl := fmt.Sprintf("%s/%s", b.imageBaseURL, imageKey)
 
 	if err := b.addThreadMessage(ctx, responseChannel, "Bot", imageUrl); err != nil {
 		span.RecordError(err)
 		logger.ErrorContext(ctx, "failed to record image URL in thread context", slog.Any("error", err))
 	}
+}
+
+// publishToGallery offers a stored image to the gallery in the background.
+// It is best-effort: it never blocks or fails the reply, has its own deadline
+// (the request context is cancelled as soon as the handler returns), and logs
+// its failures.
+func (b *AIBot) publishToGallery(ctx context.Context, s gallery.Submission) {
+	if b.gallery == nil {
+		return
+	}
+	b.galleryWG.Add(1)
+	go func() {
+		defer b.galleryWG.Done()
+		defer recoverHandler("publishToGallery")
+		pubCtx, cancel := withTimeout(context.WithoutCancel(ctx), b.timeouts.Gallery)
+		defer cancel()
+		if err := b.gallery.Publish(pubCtx, s); err != nil {
+			slog.Default().WithGroup("gallery").ErrorContext(ctx, "failed to publish image to the gallery",
+				slog.String("image_key", s.ImageKey), slog.Any("error", err))
+		}
+	}()
+}
+
+// galleryPrompt removes the bot's own mention from a prompt before it is
+// published.
+func (b *AIBot) galleryPrompt(prompt string) string {
+	self := b.discord.BotUser()
+	if self == nil {
+		return prompt
+	}
+	return strings.NewReplacer("<@"+self.ID+">", "", "<@!"+self.ID+">", "").Replace(prompt)
 }
 
 // handleImageEditMessage takes a prompt and a URL to an existing image and asks
@@ -533,7 +602,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		slog.Int("bytes", len(srcBytes)),
 		slog.String("content_type", srcContentType))
 	if srcContentType == "" {
-		return newUserError("That image isn't a supported format. Please use png, jpeg or webp.", fmt.Errorf("source image is not a supported format (png/jpeg/webp)"))
+		return newUserError("That image isn't a supported format. Please use png, jpeg or webp. Nothing else ever works out for me anyway.", fmt.Errorf("source image is not a supported format (png/jpeg/webp)"))
 	}
 
 	fullPrompt := prompt
@@ -571,7 +640,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "here ya go", m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "here ya go", prompt, gallery.KindEdit, m); err != nil {
 		return err
 	}
 
@@ -837,7 +906,7 @@ func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 // Shutdown tells the operator the bot is going away. ctx bounds the goodbye
 // message; the bot context is not used for it as it may already be cancelled.
 func (b *AIBot) Shutdown(ctx context.Context) {
-	err := b.sendMessage(ctx, "1091532074495787049", "Here I go, shutting down again!")
+	err := b.sendMessage(ctx, b.operatorChannelID, "Here I go, shutting down again!")
 	_, span := otel.GetTracerProvider().Tracer("AIBot").Start(b.botCtx, "Shutdown")
 	span.RecordError(err)
 	span.End()

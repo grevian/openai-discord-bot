@@ -250,7 +250,7 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 
 	want := []storedMessage{
 		{channelID, "alice (user-1) on guild-1", req.Prompt[len(testDrawing)+1:]},
-		{channelID, "Bot", "https://sillybullshit.click/guild-1/image-1"},
+		{channelID, "Bot", testImageBaseURL + "/guild-1/image-1"},
 	}
 	if got := tb.threads.addedMessages(); !equalStored(got, want) {
 		t.Errorf("stored %+v, want %+v", got, want)
@@ -439,7 +439,7 @@ func TestReadyAndShutdownNotifyOperator(t *testing.T) {
 		t.Fatalf("unexpected messages %+v", got)
 	}
 	for _, msg := range got {
-		if msg.Channel != "1091532074495787049" {
+		if msg.Channel != testOperatorChannel {
 			t.Errorf("operator message sent to %q", msg.Channel)
 		}
 	}

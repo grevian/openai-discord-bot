@@ -16,11 +16,16 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
+	"openai-discord-bot/bot"
 	"openai-discord-bot/bot/storage"
 	"openai-discord-bot/config/awstrace"
+	"openai-discord-bot/gallery"
 )
 
-var awscfg aws.Config
+var (
+	awscfg      aws.Config
+	botSettings bot.Settings
+)
 
 func init() {
 	viper.SetDefault("DEBUG_LOGS", false)
@@ -54,6 +59,11 @@ func Configure(serviceCtx context.Context) {
 	}
 	logger.DebugContext(serviceCtx, "Configuration Loaded", configFields...)
 
+	botSettings, err = loadBotSettings(viper.GetViper())
+	if err != nil {
+		panic(err)
+	}
+
 	if viper.GetBool("TRACING") {
 		logger.InfoContext(serviceCtx, "Configuring tracing")
 		tracingErr := configureTracing(serviceCtx)
@@ -77,12 +87,34 @@ func GetAWSConfig() aws.Config {
 	return awscfg
 }
 
+// GetBotSettings returns the operator settings validated by Configure.
+func GetBotSettings() bot.Settings {
+	return botSettings
+}
+
 func GetStorage() *storage.Storage {
 	return storage.NewStorage(GetAWSConfig())
 }
 
 func GetImageStorage() *storage.ImageStorage {
 	return storage.NewImageStorage(GetAWSConfig(), viper.GetString("OPENAIDISCORDBOTIMAGES_NAME"))
+}
+
+// GetGallery returns the public gallery publisher, or nil when the images
+// bucket is not configured or the gallery's policy cannot be loaded. The
+// gallery is optional, so problems here are logged, never fatal.
+func GetGallery() *gallery.Gallery {
+	bucket := viper.GetString("OPENAIDISCORDBOTIMAGES_NAME")
+	if bucket == "" {
+		slog.Warn("no images bucket configured, the gallery is disabled")
+		return nil
+	}
+	cfg, err := gallery.LoadConfig()
+	if err != nil {
+		slog.Error("failed to load the gallery config, the gallery is disabled", slog.Any("error", err))
+		return nil
+	}
+	return gallery.New(cfg, gallery.NewS3Store(GetAWSConfig(), bucket))
 }
 
 func GetLogger() *slog.Logger {
