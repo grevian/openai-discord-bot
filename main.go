@@ -13,8 +13,18 @@ import (
 	"openai-discord-bot/config"
 )
 
-// shutdownDrainTimeout bounds how long shutdown waits for in-flight messages.
-const shutdownDrainTimeout = 30 * time.Second
+// Shutdown time budget. `docker stop` (bot.service ExecStop) sends SIGKILL
+// after its default 10s grace period, so drain + goodbye + Discord close +
+// telemetry flush must all fit under that: 8s + 0.7s + 0.8s = 9.5s.
+// Raising the grace period (terraform) would allow a longer drain.
+const (
+	// shutdownDrainTimeout bounds how long shutdown waits for in-flight messages.
+	shutdownDrainTimeout = 8 * time.Second
+	// shutdownGoodbyeTimeout bounds the goodbye message to the operator.
+	shutdownGoodbyeTimeout = 700 * time.Millisecond
+	// shutdownFlushWait is the time given to flush telemetry after cancel.
+	shutdownFlushWait = 800 * time.Millisecond
+)
 
 func main() {
 	serviceCtx, cancel := context.WithCancel(context.Background())
@@ -52,16 +62,15 @@ func main() {
 	}
 
 	logger.Info("Gracefully shutting down")
-	// Stop taking new messages and let in-flight ones finish. Note that
-	// `docker stop` (bot.service ExecStop) sends SIGKILL after its own grace
-	// period (10s by default), which cuts this budget short unless it is
-	// raised with `-t`.
+	// Stop taking new messages and let in-flight ones finish (see the budget above).
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), shutdownDrainTimeout)
 	if err := botInstance.Drain(drainCtx); err != nil {
 		logger.Warn("Gave up waiting for in-flight messages", slog.Any("error", err))
 	}
 	drainCancel()
-	botInstance.Shutdown()
+	goodbyeCtx, goodbyeCancel := context.WithTimeout(context.Background(), shutdownGoodbyeTimeout)
+	botInstance.Shutdown(goodbyeCtx)
+	goodbyeCancel()
 	if err := discordSession.Close(); err != nil {
 		logger.Error("Error closing Discord connection", slog.Any("error", err))
 	}
@@ -69,6 +78,6 @@ func main() {
 	// Terminate the service context, which should flush any open logs/traces/etc.
 	cancel()
 
-	// Give anything flushing from the system context, a few seconds to finish up, then exit
-	time.Sleep(time.Second * 5)
+	// Give anything flushing from the service context a moment to finish, then exit.
+	time.Sleep(shutdownFlushWait)
 }

@@ -834,10 +834,10 @@ func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 	}
 }
 
-func (b *AIBot) Shutdown() {
-	// The bot context may already be cancelled during shutdown; the goodbye
-	// message still gets its own Discord deadline.
-	err := b.sendMessage(context.WithoutCancel(b.botCtx), "1091532074495787049", "Here I go, shutting down again!")
+// Shutdown tells the operator the bot is going away. ctx bounds the goodbye
+// message; the bot context is not used for it as it may already be cancelled.
+func (b *AIBot) Shutdown(ctx context.Context) {
+	err := b.sendMessage(ctx, "1091532074495787049", "Here I go, shutting down again!")
 	_, span := otel.GetTracerProvider().Tracer("AIBot").Start(b.botCtx, "Shutdown")
 	span.RecordError(err)
 	span.End()

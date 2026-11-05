@@ -433,7 +433,7 @@ func equalStored(a, b []storedMessage) bool {
 func TestReadyAndShutdownNotifyOperator(t *testing.T) {
 	tb := newTestBot(t)
 	tb.bot.ReadyHandler(nil, &discordgo.Ready{})
-	tb.bot.Shutdown()
+	tb.bot.Shutdown(context.Background())
 	got := tb.discord.sentMessages()
 	if len(got) != 2 || got[0].Content != "Gah! I'm awake! How long was I out?!" || got[1].Content != "Here I go, shutting down again!" {
 		t.Fatalf("unexpected messages %+v", got)
@@ -447,7 +447,7 @@ func TestReadyAndShutdownNotifyOperator(t *testing.T) {
 	// A failed send is only logged.
 	tb.discord.sendErr = errors.New("discord down")
 	tb.bot.ReadyHandler(nil, &discordgo.Ready{})
-	tb.bot.Shutdown()
+	tb.bot.Shutdown(context.Background())
 }
 
 func TestSessionDiscordReadsState(t *testing.T) {

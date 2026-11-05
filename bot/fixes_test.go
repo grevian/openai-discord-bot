@@ -182,7 +182,7 @@ func TestEveryExternalCallHasADeadline(t *testing.T) {
 		},
 		"ready and shutdown": func(tb *testBot) {
 			tb.bot.ReadyHandler(nil, &discordgo.Ready{})
-			tb.bot.Shutdown()
+			tb.bot.Shutdown(context.Background())
 		},
 	}
 	for name, run := range flows {
