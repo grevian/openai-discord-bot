@@ -323,12 +323,18 @@ func (g *Gallery) apply(m Manifest, entry Entry) Manifest {
 // numeric IDs, which must not be published.
 var mentionRE = regexp.MustCompile(`<(?:@[!&]?|#)\d+>`)
 
+// broadcastRE matches @everyone and @here, which would ping a whole channel if
+// the text were ever copied back into Discord. The page is inert, so this is
+// hygiene rather than a security control.
+var broadcastRE = regexp.MustCompile(`(?i)(^|\W)@(everyone|here)\b`)
+
 // CleanPrompt prepares a user's prompt for publication: Discord mentions are
-// replaced (they carry user IDs), whitespace is collapsed, and the result is
+// replaced (they carry user IDs), @everyone and @here lose their @, whitespace is collapsed, and the result is
 // truncated. It does not HTML-escape anything: the page renders prompts with
 // textContent and the manifest is JSON, which escapes <, > and &.
 func CleanPrompt(p string) string {
 	p = mentionRE.ReplaceAllString(p, "someone")
+	p = broadcastRE.ReplaceAllString(p, "$1$2")
 	p = strings.Join(strings.Fields(p), " ")
 	if utf8.RuneCountInString(p) > maxPromptRunes {
 		r := []rune(p)

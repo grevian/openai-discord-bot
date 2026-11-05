@@ -498,6 +498,8 @@ func TestCleanPrompt(t *testing.T) {
 		{"whitespace collapsed", "  a \n cat\t\ton   a train ", "a cat on a train"},
 		{"user mention", "draw <@123456789> and <@!987654321>", "draw someone and someone"},
 		{"role and channel mentions", "<@&5555> in <#6666>", "someone in someone"},
+		{"broadcast mentions", "hey @everyone and @here and @Everyone", "hey everyone and here and Everyone"},
+		{"only the broadcast words", "me@here.example and @hereford", "me@here.example and @hereford"},
 		{"empty", "   ", ""},
 		{"html is left alone for the renderer", "<script>alert(1)</script>", "<script>alert(1)</script>"},
 	}
