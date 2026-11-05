@@ -250,11 +250,11 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 func TestDrawFailureNotifiesChannel(t *testing.T) {
 	tb := newTestBot(t)
 	tb.images.generate = func(context.Context, openai.ImageGenerateParams) (*openai.ImagesResponse, error) {
-		return nil, errors.New("nope")
+		return nil, errors.New("nope-internal-detail")
 	}
 	tb.bot.handleMessage(context.Background(), mention("🎨 a cat"))
 	got := tb.discord.sentMessages()
-	if len(got) != 1 || !strings.HasPrefix(got[0].Content, "I fucked that up and threw it away. Sorry. (") {
+	if len(got) != 1 || got[0].Content != msgGeneric {
 		t.Fatalf("unexpected messages %+v", got)
 	}
 }

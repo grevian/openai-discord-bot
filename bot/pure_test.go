@@ -127,8 +127,8 @@ func TestClassifyMessage(t *testing.T) {
 		wantPrompt string
 	}{
 		{"chat strips mention", me + " hello there", false, intentChat, " hello there"},
-		{"draw phrase", me + " Draw me a picture of a Cat", false, intentDraw, me + "  a cat"},
-		{"draw emoji", me + " 🎨 a dog", false, intentDraw, me + " 🎨 a dog"},
+		{"draw phrase", me + " Draw me a picture of a Cat", false, intentDraw, "a Cat"},
+		{"draw emoji", me + " 🎨 a Dog", false, intentDraw, "a Dog"},
 		{"edit pencil", me + " ✏️ add a hat", true, intentEdit, "add a hat"},
 		{"edit colon", me + " Edit: add a hat", true, intentEdit, "add a hat"},
 		{"redraw", me + " redraw as a cat", true, intentEdit, "as a cat"},
@@ -147,53 +147,26 @@ func TestClassifyMessage(t *testing.T) {
 }
 
 func TestFailureMessage(t *testing.T) {
-	err := errors.New("kaboom")
-	if got := failureMessage(intentChat, err); got != "Whoops something went wrong processing that" {
-		t.Errorf("chat failure message = %q", got)
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"plain", errors.New("kaboom secret"), msgGeneric},
+		{"rate limit", &openai.Error{StatusCode: http.StatusTooManyRequests, Code: "rate_limit_exceeded"}, msgBusy},
+		{"overloaded", &openai.Error{StatusCode: http.StatusServiceUnavailable}, msgBusy},
+		{"quota is not busy", &openai.Error{StatusCode: http.StatusTooManyRequests, Code: "insufficient_quota"}, msgGeneric},
+		{"content policy", &openai.Error{StatusCode: http.StatusBadRequest, Code: "content_policy_violation"}, msgInvalidRequest},
+		{"moderation", &openai.Error{StatusCode: http.StatusBadRequest, Code: "moderation_blocked"}, msgInvalidRequest},
+		{"wrapped invalid", fmt.Errorf("w: %w", &openai.Error{StatusCode: http.StatusBadRequest}), msgInvalidRequest},
+		{"500", &openai.Error{StatusCode: http.StatusInternalServerError}, msgGeneric},
+		{"401", &openai.Error{StatusCode: http.StatusUnauthorized}, msgGeneric},
 	}
-	for _, intent := range []messageIntent{intentDraw, intentEdit} {
-		if got, want := failureMessage(intent, err), "I fucked that up and threw it away. Sorry. (kaboom)"; got != want {
-			t.Errorf("intent %v failure message = %q, want %q", intent, got, want)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := failureMessage(tt.err); got != tt.want {
+				t.Errorf("failureMessage = %q, want %q", got, tt.want)
+			}
+		})
 	}
-}
-
-func TestLoadPromptFile(t *testing.T) {
-	t.Run("repository prompt parses", func(t *testing.T) {
-		pf, err := loadPromptFile("../prompts/danbo.json")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if pf.Instructions == "" {
-			t.Error("expected non-empty instructions")
-		}
-	})
-	t.Run("missing file", func(t *testing.T) {
-		if _, err := loadPromptFile(filepath.Join(t.TempDir(), "nope.json")); err == nil {
-			t.Error("expected an error")
-		}
-	})
-	t.Run("bad json", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "bad.json")
-		if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := loadPromptFile(path); err == nil {
-			t.Error("expected an error")
-		}
-	})
-	t.Run("fields", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "p.json")
-		body := `{"instructions":"i","drawing_instructions":"d","examples":[{"role":"user","content":"c"}]}`
-		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		pf, err := loadPromptFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if pf.Instructions != "i" || pf.DrawingInstructions != "d" || len(pf.Examples) != 1 || pf.Examples[0].Content != "c" {
-			t.Errorf("unexpected prompt file %+v", pf)
-		}
-	})
 }

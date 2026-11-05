@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -144,7 +145,7 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 		return intentEdit, stripEditTriggers(sanitizedUserPrompt)
 	case wantsDraw:
 		// Strip the prompt prefix out of the message
-		return intentDraw, strings.ReplaceAll(strings.ToLower(content), "draw me a picture of", "")
+		return intentDraw, stripDrawTriggers(sanitizedUserPrompt)
 	default:
 		return intentChat, sanitizedUserPrompt
 	}
@@ -219,19 +220,38 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 		err = b.handleCompletionPrompt(ctx, responseChannel, prompt, threadPromptContext, m)
 	}
 	if err != nil {
-		b.reportError(ctx, span, responseChannel, failureMessage(intent, err), err)
+		b.reportError(ctx, span, responseChannel, failureMessage(err), err)
 		return
 	}
 	span.SetStatus(codes.Ok, "Success")
 }
 
-// failureMessage is the text posted to the channel when handling a message of
-// the given intent failed with err.
-func failureMessage(intent messageIntent, err error) string {
-	if intent == intentChat {
-		return "Whoops something went wrong processing that"
+// User-facing failure messages. The full error goes to the logs and spans only.
+const (
+	msgInvalidRequest = "OpenAI couldn't process that request. It may have been blocked by its content policy, so try rewording it."
+	msgBusy           = "I'm a bit busy right now, please try again in a minute."
+	msgGeneric        = "Whoops, something went wrong processing that. Please try again."
+)
+
+// failureMessage is the text posted to the channel when handling a message
+// failed with err. It never includes the error's own text.
+func failureMessage(err error) string {
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		switch {
+		case apiErr.StatusCode == http.StatusTooManyRequests,
+			apiErr.StatusCode == http.StatusServiceUnavailable,
+			apiErr.StatusCode == 529,
+			apiErr.Code == "rate_limit_exceeded", apiErr.Code == "server_is_overloaded":
+			if apiErr.Code != "insufficient_quota" {
+				return msgBusy
+			}
+		case apiErr.StatusCode == http.StatusBadRequest,
+			apiErr.Code == "content_policy_violation", apiErr.Code == "moderation_blocked":
+			return msgInvalidRequest
+		}
 	}
-	return fmt.Sprintf("I fucked that up and threw it away. Sorry. (%s)", err.Error())
+	return msgGeneric
 }
 
 // reportError marks the span as failed and tells the channel that the request
@@ -542,6 +562,16 @@ func isImageAttachment(att *discordgo.MessageAttachment) bool {
 		strings.HasSuffix(lower, ".jpeg") ||
 		strings.HasSuffix(lower, ".webp")
 }
+
+// stripDrawTriggers removes the draw triggers from a prompt, keeping the
+// user's original case.
+func stripDrawTriggers(prompt string) string {
+	out := strings.ReplaceAll(prompt, "🎨", "")
+	out = drawPhrase.ReplaceAllString(out, "")
+	return strings.TrimSpace(out)
+}
+
+var drawPhrase = regexp.MustCompile(`(?i)draw me a picture of`)
 
 func stripEditTriggers(prompt string) string {
 	out := strings.ReplaceAll(prompt, "✏️", "")
