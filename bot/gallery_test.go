@@ -21,6 +21,8 @@ type fakeGallery struct {
 	hadTime   []bool
 	cancelled []bool
 	err       error
+	// panicWith, when set, makes Publish panic with it.
+	panicWith any
 	// block, when set, makes Publish wait for it to be closed (or ctx to end).
 	block chan struct{}
 	// entered is closed-on-send when Publish starts.
@@ -36,6 +38,9 @@ func (f *fakeGallery) Publish(ctx context.Context, s gallery.Submission) error {
 		case <-f.block:
 		case <-ctx.Done():
 		}
+	}
+	if f.panicWith != nil {
+		panic(f.panicWith)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -137,6 +142,27 @@ func TestGalleryFailureDoesNotAffectTheReply(t *testing.T) {
 	}
 	if len(g.submissions()) != 1 {
 		t.Error("the gallery was not tried")
+	}
+}
+
+// The publish goroutine runs outside the handler's recover, so a panic in the
+// gallery would otherwise crash the whole bot.
+func TestGalleryPanicIsRecovered(t *testing.T) {
+	g := &fakeGallery{panicWith: "gallery exploded"}
+	tb := drawingBot(t, g)
+
+	tb.bot.handleMessage(context.Background(), mention("🎨 a cat"))
+	tb.bot.galleryWG.Wait() // would never return (or the process would die) without the recover
+
+	if sent := tb.discord.sentMessages(); len(sent) != 1 || sent[0].Content != "a picture I drawed" {
+		t.Fatalf("the user should still get the image, got %+v", sent)
+	}
+	// The bot keeps working afterwards.
+	g.panicWith = nil
+	tb.bot.handleMessage(context.Background(), mention("🎨 another cat"))
+	tb.bot.galleryWG.Wait()
+	if got := g.submissions(); len(got) != 1 {
+		t.Errorf("later publish did not go through: %+v", got)
 	}
 }
 

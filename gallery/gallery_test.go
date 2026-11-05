@@ -498,6 +498,12 @@ func TestCleanPrompt(t *testing.T) {
 		{"whitespace collapsed", "  a \n cat\t\ton   a train ", "a cat on a train"},
 		{"user mention", "draw <@123456789> and <@!987654321>", "draw someone and someone"},
 		{"role and channel mentions", "<@&5555> in <#6666>", "someone in someone"},
+		{"broadcast mentions", "hey @everyone and @here and @Everyone", "hey everyone and here and Everyone"},
+		{"doubled @", "@@here and @@everyone", "here and everyone"},
+		{"after a mention", "<@123>@here", "someone here"},
+		{"emails are left alone", "me@here.example, user@everyone.com, bob@here.org and caf\u00e9@here.fr", "me@here.example, user@everyone.com, bob@here.org and caf\u00e9@here.fr"},
+		{"known gap: a letter directly before doubled @s", "x@@everyone", "x@everyone"},
+		{"other words are left alone", "@hereford and @everyones and @her", "@hereford and @everyones and @her"},
 		{"empty", "   ", ""},
 		{"html is left alone for the renderer", "<script>alert(1)</script>", "<script>alert(1)</script>"},
 	}
