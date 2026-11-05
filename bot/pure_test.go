@@ -146,6 +146,12 @@ func TestClassifyMessage(t *testing.T) {
 	}
 }
 
+func TestUserErrorNilCause(t *testing.T) {
+	if got := newUserError("hi", nil).Error(); got != "hi" {
+		t.Errorf("Error() = %q, want %q", got, "hi")
+	}
+}
+
 func TestFailureMessage(t *testing.T) {
 	tests := []struct {
 		name string
