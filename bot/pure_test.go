@@ -127,8 +127,8 @@ func TestClassifyMessage(t *testing.T) {
 		wantPrompt string
 	}{
 		{"chat strips mention", me + " hello there", false, intentChat, " hello there"},
-		{"draw phrase", me + " Draw me a picture of a Cat", false, intentDraw, me + "  a cat"},
-		{"draw emoji", me + " 🎨 a dog", false, intentDraw, me + " 🎨 a dog"},
+		{"draw phrase", me + " Draw me a picture of a Cat", false, intentDraw, "a Cat"},
+		{"draw emoji", me + " 🎨 a Dog", false, intentDraw, "a Dog"},
 		{"edit pencil", me + " ✏️ add a hat", true, intentEdit, "add a hat"},
 		{"edit colon", me + " Edit: add a hat", true, intentEdit, "add a hat"},
 		{"redraw", me + " redraw as a cat", true, intentEdit, "as a cat"},
@@ -146,15 +146,37 @@ func TestClassifyMessage(t *testing.T) {
 	}
 }
 
-func TestFailureMessage(t *testing.T) {
-	err := errors.New("kaboom")
-	if got := failureMessage(intentChat, err); got != "Whoops something went wrong processing that" {
-		t.Errorf("chat failure message = %q", got)
+func TestUserErrorNilCause(t *testing.T) {
+	if got := newUserError("hi", nil).Error(); got != "hi" {
+		t.Errorf("Error() = %q, want %q", got, "hi")
 	}
-	for _, intent := range []messageIntent{intentDraw, intentEdit} {
-		if got, want := failureMessage(intent, err), "I fucked that up and threw it away. Sorry. (kaboom)"; got != want {
-			t.Errorf("intent %v failure message = %q, want %q", intent, got, want)
-		}
+}
+
+func TestFailureMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"plain", errors.New("kaboom secret"), msgGeneric},
+		{"rate limit", &openai.Error{StatusCode: http.StatusTooManyRequests, Code: "rate_limit_exceeded"}, msgBusy},
+		{"overloaded", &openai.Error{StatusCode: http.StatusServiceUnavailable}, msgBusy},
+		{"quota is not busy", &openai.Error{StatusCode: http.StatusTooManyRequests, Code: "insufficient_quota"}, msgGeneric},
+		{"content policy", &openai.Error{StatusCode: http.StatusBadRequest, Code: "content_policy_violation"}, msgInvalidRequest},
+		{"moderation", &openai.Error{StatusCode: http.StatusBadRequest, Code: "moderation_blocked"}, msgInvalidRequest},
+		{"wrapped content policy", fmt.Errorf("w: %w", &openai.Error{StatusCode: http.StatusBadRequest, Code: "content_policy_violation"}), msgInvalidRequest},
+		{"bare 400", &openai.Error{StatusCode: http.StatusBadRequest}, msgGeneric},
+		{"user error nil cause", newUserError("hi", nil), "hi"},
+		{"500", &openai.Error{StatusCode: http.StatusInternalServerError}, msgGeneric},
+		{"user error", fmt.Errorf("w: %w", newUserError("too big", errors.New("internal"))), "too big"},
+		{"401", &openai.Error{StatusCode: http.StatusUnauthorized}, msgGeneric},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := failureMessage(tt.err); got != tt.want {
+				t.Errorf("failureMessage = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

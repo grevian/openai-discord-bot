@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -68,7 +69,7 @@ func TestDispatchDoesNotLeakUploadWhenDiscordFails(t *testing.T) {
 		t.Fatalf("expected the S3 upload to complete with the full image, got %+v", stored)
 	}
 	sent := tb.discord.sentMessages()
-	if len(sent) != 1 || !strings.Contains(sent[0].Content, "failed to send embedded image to discord") {
+	if len(sent) != 1 || sent[0].Content != msgGeneric {
 		t.Fatalf("expected the failure to be reported, got %+v", sent)
 	}
 }
@@ -108,7 +109,7 @@ func TestEmptyImageResponsesAreErrors(t *testing.T) {
 func assertNoImageError(t *testing.T, tb *testBot) {
 	t.Helper()
 	sent := tb.discord.sentMessages()
-	if len(sent) != 1 || sent[0].File != nil || !strings.Contains(sent[0].Content, "no image") {
+	if len(sent) != 1 || sent[0].File != nil || sent[0].Content != msgGeneric {
 		t.Fatalf("expected a 'no image' error and no attachment, got %+v", sent)
 	}
 	if len(tb.imgStore.storedImages()) != 0 {
@@ -211,7 +212,7 @@ func TestHungOpenAICallTimesOut(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("handler took %v despite a 50ms timeout", elapsed)
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Fatalf("expected the user to be told it failed, got %+v", got)
 	}
 }
@@ -226,7 +227,7 @@ func TestErrorIsReportedAfterRequestDeadline(t *testing.T) {
 		return nil, ctx.Err()
 	}
 	tb.bot.messageCreate(nil, mention("hello"))
-	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Fatalf("expected an error notice, got %+v", got)
 	}
 }
@@ -257,7 +258,7 @@ func TestEmptyCompletionIsNotRetried(t *testing.T) {
 	if n := tb.responses.callCount(); n != 1 {
 		t.Errorf("expected exactly one call, got %d", n)
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Errorf("unexpected messages %+v", got)
 	}
 }
@@ -286,7 +287,7 @@ func TestCompletionRetriesOnlyInTheSDK(t *testing.T) {
 	if n := attempts.Load(); n != 3 {
 		t.Errorf("expected 3 HTTP attempts (1 + 2 SDK retries), got %d", n)
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Errorf("unexpected messages %+v", got)
 	}
 }
@@ -372,7 +373,7 @@ func TestStalledSourceImageDownloadTimesOut(t *testing.T) {
 	if len(tb.images.edited) != 0 {
 		t.Error("no edit should be requested without the source image")
 	}
-	if sent := tb.discord.sentMessages(); len(sent) != 1 || !strings.Contains(sent[0].Content, "failed to read source image") {
+	if sent := tb.discord.sentMessages(); len(sent) != 1 || sent[0].Content != msgGeneric {
 		t.Fatalf("expected a read failure notice, got %+v", sent)
 	}
 }
@@ -442,5 +443,110 @@ func TestMessageCreateReleasesInflightSlot(t *testing.T) {
 			t.Errorf("panics=%v: Drain did not return promptly: %v", panics, err)
 		}
 		cancel()
+	}
+}
+
+// --- Source image size limit ----------------------------------------------
+
+// sizedImageStore serves one source image with a caller-chosen reported length,
+// so tests can exercise both the Content-Length check (length known) and the
+// streamed check (length -1, the response had no Content-Length).
+type sizedImageStore struct {
+	*fakeImageStore
+	length int64
+	body   io.Reader
+}
+
+func (s *sizedImageStore) GetImageFromURL(context.Context, string) (io.ReadCloser, int64, error) {
+	return io.NopCloser(s.body), s.length, nil
+}
+
+// zeroReader yields zero bytes forever; wrapped in io.LimitReader it models a
+// large body without allocating it.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+func TestEditRejectsSourceOverEditLimit(t *testing.T) {
+	// The body is a valid PNG followed by padding, so the only thing wrong with
+	// it is its size.
+	oversized := func() io.Reader {
+		return io.MultiReader(bytes.NewReader(pngBytes), io.LimitReader(zeroReader{}, maxEditSourceBytes))
+	}
+	cases := map[string]struct {
+		length int64
+		body   io.Reader
+	}{
+		"content-length over limit":           {maxEditSourceBytes + 1, bytes.NewReader(pngBytes)},
+		"content-length at limit":             {maxEditSourceBytes, bytes.NewReader(pngBytes)},
+		"unknown length, streamed over limit": {-1, oversized()},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tb := newTestBot(t)
+			tb.bot.imageStorage = &sizedImageStore{fakeImageStore: tb.imgStore, length: tc.length, body: tc.body}
+			m := mention("edit: add a hat")
+			m.Attachments = []*discordgo.MessageAttachment{{URL: "https://cdn.example/big.png", Filename: "big.png"}}
+			tb.bot.handleMessage(context.Background(), m)
+
+			if len(tb.images.edited) != 0 {
+				t.Error("an oversized source must not be sent to OpenAI")
+			}
+			if got := tb.discord.sentMessages(); len(got) != 1 || !strings.Contains(got[0].Content, "too large") {
+				t.Errorf("user should be told the image is too large, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestEditAcceptsSourceJustUnderEditLimit(t *testing.T) {
+	tb := newTestBot(t)
+	tb.bot.imageStorage = &sizedImageStore{
+		fakeImageStore: tb.imgStore,
+		length:         maxEditSourceBytes - 1,
+		body:           bytes.NewReader(pngBytes),
+	}
+	tb.images.edit = func(context.Context, openai.ImageEditParams) (*openai.ImagesResponse, error) {
+		return imageResponse(base64.StdEncoding.EncodeToString(pngBytes)), nil
+	}
+	m := mention("edit: add a hat")
+	m.Attachments = []*discordgo.MessageAttachment{{URL: "https://cdn.example/ok.png", Filename: "ok.png"}}
+	tb.bot.handleMessage(context.Background(), m)
+
+	if len(tb.images.edited) != 1 {
+		t.Fatalf("a source under the limit should be edited, got %d Edit calls", len(tb.images.edited))
+	}
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// A source with no Content-Length must not be read past the limit: the
+// streamed body here is twice the limit, and the handler should stop at it.
+func TestStreamedEditSourceReadIsBounded(t *testing.T) {
+	tb := newTestBot(t)
+	body := &countingReader{r: io.MultiReader(bytes.NewReader(pngBytes), io.LimitReader(zeroReader{}, 2*maxEditSourceBytes))}
+	tb.bot.imageStorage = &sizedImageStore{fakeImageStore: tb.imgStore, length: -1, body: body}
+	m := mention("edit: add a hat")
+	m.Attachments = []*discordgo.MessageAttachment{{URL: "https://cdn.example/huge.png", Filename: "huge.png"}}
+	tb.bot.handleMessage(context.Background(), m)
+
+	if body.n > maxEditSourceBytes+1 {
+		t.Errorf("read %d bytes of a streamed source; must stop at %d", body.n, maxEditSourceBytes+1)
+	}
+	if len(tb.images.edited) != 0 {
+		t.Error("an oversized streamed source must not be sent to OpenAI")
 	}
 }
