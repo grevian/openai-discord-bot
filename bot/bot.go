@@ -27,15 +27,36 @@ import (
 )
 
 type AIBot struct {
-	openapiClient       openai.Client
+	images              imageAPI
+	responses           responsesAPI
 	botCtx              context.Context
 	shutdown            context.CancelFunc
-	discordSession      *discordgo.Session
+	discord             discordAPI
 	systemInstructions  string
 	drawingInstructions string
 	basePrompt          []storage.ConversationMessage
-	storage             *storage.Storage
-	imageStorage        *storage.ImageStorage
+	storage             threadStore
+	imageStorage        imageStore
+}
+
+// promptFile is the on-disk format of prompts/danbo.json.
+type promptFile struct {
+	Instructions        string                        `json:"instructions"`
+	DrawingInstructions string                        `json:"drawing_instructions"`
+	Examples            []storage.ConversationMessage `json:"examples"`
+}
+
+// loadPromptFile reads and parses the bot's prompt file.
+func loadPromptFile(path string) (promptFile, error) {
+	var pf promptFile
+	promptBytes, err := os.ReadFile(path)
+	if err != nil {
+		return pf, fmt.Errorf("failed to read initial prompt: %w", err)
+	}
+	if err := json.Unmarshal(promptBytes, &pf); err != nil {
+		return pf, fmt.Errorf("failed to parse initial prompt: %w", err)
+	}
+	return pf, nil
 }
 
 func (b *AIBot) Go() error {
@@ -59,30 +80,20 @@ func isFatalOpenAIError(err error) bool {
 }
 
 func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage) *AIBot {
-	promptBytes, err := os.ReadFile("prompts/danbo.json")
+	prompt, err := loadPromptFile("prompts/danbo.json")
 	if err != nil {
-		log.Panic("Failed to read initial prompt", err)
-	}
-
-	promptFile := struct {
-		Instructions        string                        `json:"instructions"`
-		DrawingInstructions string                        `json:"drawing_instructions"`
-		Examples            []storage.ConversationMessage `json:"examples"`
-	}{}
-	err = json.Unmarshal(promptBytes, &promptFile)
-
-	if err != nil {
-		log.Panic("Failed to parse initial prompt", err)
+		log.Panic(err)
 	}
 
 	bot := &AIBot{
-		discordSession:      discordSession,
-		openapiClient:       aiClient,
+		discord:             sessionDiscord{discordSession},
+		images:              &aiClient.Images,
+		responses:           &aiClient.Responses,
 		botCtx:              botCtx,
 		shutdown:            shutdown,
-		systemInstructions:  promptFile.Instructions,
-		drawingInstructions: promptFile.DrawingInstructions,
-		basePrompt:          promptFile.Examples,
+		systemInstructions:  prompt.Instructions,
+		drawingInstructions: prompt.DrawingInstructions,
+		basePrompt:          prompt.Examples,
 		storage:             threadStorage,
 		imageStorage:        imageStorage,
 	}
@@ -125,17 +136,56 @@ func userWasMentioned(user *discordgo.User, mentioned []*discordgo.User) bool {
 	return false
 }
 
-func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+// messageIntent is what a mention is asking the bot to do.
+type messageIntent int
+
+const (
+	intentChat messageIntent = iota
+	intentDraw
+	intentEdit
+)
+
+// classifyMessage decides what a message is asking for and returns the prompt
+// to send for it. botID is stripped from the prompt; hasSourceImage reports
+// whether an image to edit is available.
+func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent, string) {
+	// Strip our UserId out of messages to keep the record from being too confusing,
+	sanitizedUserPrompt := strings.ReplaceAll(content, fmt.Sprintf("<@%s>", botID), "")
+	lowerPrompt := strings.ToLower(sanitizedUserPrompt)
+
+	wantsEdit := hasSourceImage && (strings.Contains(sanitizedUserPrompt, "✏️") ||
+		strings.Contains(lowerPrompt, "edit:") ||
+		strings.Contains(lowerPrompt, "redraw"))
+	wantsDraw := strings.Contains(lowerPrompt, "🎨") || strings.Contains(lowerPrompt, "draw me a picture of")
+
+	switch {
+	case wantsEdit:
+		return intentEdit, stripEditTriggers(sanitizedUserPrompt)
+	case wantsDraw:
+		// Strip the prompt prefix out of the message
+		return intentDraw, strings.ReplaceAll(strings.ToLower(content), "draw me a picture of", "")
+	default:
+		return intentChat, sanitizedUserPrompt
+	}
+}
+
+// messageCreate is the Discord MessageCreate handler.
+func (b *AIBot) messageCreate(_ *discordgo.Session, m *discordgo.MessageCreate) {
+	b.handleMessage(context.Background(), m)
+}
+
+func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	logger := slog.Default().WithGroup("messageCreate")
-	if m.Author.ID == s.State.User.ID {
+	self := b.discord.BotUser()
+	if m.Author.ID == self.ID {
 		return
 	}
 
-	if !userWasMentioned(s.State.User, m.Mentions) {
+	if !userWasMentioned(self, m.Mentions) {
 		return
 	}
 
-	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(context.Background(), "messageCreate")
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "messageCreate")
 	span.SetAttributes(
 		attribute.String("user", m.Author.ID),
 		attribute.String("guild", m.GuildID),
@@ -146,7 +196,7 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	logger.InfoContext(ctx, "Processing Message", slog.String("message", m.Content))
 
 	// Figure out if we should be acting in a thread
-	responseChannel, threadPromptContext, err := b.handleThreading(ctx, s, m)
+	responseChannel, threadPromptContext, err := b.handleThreading(ctx, m)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to load or create thread context", slog.Any("error", err))
 		span.SetStatus(codes.Error, err.Error())
@@ -155,66 +205,51 @@ func (b *AIBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	}
 	logger.DebugContext(ctx, "loaded thread context", slog.Int("thread_length", len(threadPromptContext)))
 
-	// Strip our UserId out of messages to keep the record from being too confusing,
-	sanitizedUserPrompt := strings.ReplaceAll(m.Content, fmt.Sprintf("<@%s>", s.State.User.ID), "")
-
 	// Let users know we're "typing", the call to OpenAI can take a few seconds
-	_ = s.ChannelTyping(responseChannel, discordgo.WithContext(ctx))
+	_ = b.discord.ChannelTyping(responseChannel, discordgo.WithContext(ctx))
 
-	sourceImageURL := findEditSourceImage(s, m)
-	lowerPrompt := strings.ToLower(sanitizedUserPrompt)
-	wantsEdit := sourceImageURL != "" && (strings.Contains(sanitizedUserPrompt, "✏️") ||
-		strings.Contains(lowerPrompt, "edit:") ||
-		strings.Contains(lowerPrompt, "redraw"))
-	wantsDraw := strings.Contains(lowerPrompt, "🎨") || strings.Contains(lowerPrompt, "draw me a picture of")
+	sourceImageURL := b.findEditSourceImage(m)
+	intent, prompt := classifyMessage(m.Content, self.ID, sourceImageURL != "")
 
-	switch {
-	case wantsEdit:
-		editPrompt := stripEditTriggers(sanitizedUserPrompt)
-		err = b.handleImageEditMessage(ctx, responseChannel, editPrompt, sourceImageURL, m)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			_, discordErr := b.discordSession.ChannelMessageSend(responseChannel, fmt.Sprintf("I fucked that up and threw it away. Sorry. (%s)", err.Error()), discordgo.WithContext(ctx))
-			if discordErr != nil {
-				span.RecordError(err)
-				logger.ErrorContext(ctx, "Failed to notify discord channel of the error", slog.Any("error", err))
-			}
-			return
-		}
-	case wantsDraw:
-		// Strip the prompt prefix out of the message
-		sanitizedUserPrompt = strings.ReplaceAll(strings.ToLower(m.Content), "draw me a picture of", "")
-		err = b.handleImageMessage(ctx, responseChannel, sanitizedUserPrompt, m)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			_, discordErr := b.discordSession.ChannelMessageSend(responseChannel, fmt.Sprintf("I fucked that up and threw it away. Sorry. (%s)", err.Error()), discordgo.WithContext(ctx))
-			if discordErr != nil {
-				span.RecordError(err)
-				logger.ErrorContext(ctx, "Failed to notify discord channel of the error", slog.Any("error", err))
-			}
-			return
-		}
+	switch intent {
+	case intentEdit:
+		err = b.handleImageEditMessage(ctx, responseChannel, prompt, sourceImageURL, m)
+	case intentDraw:
+		err = b.handleImageMessage(ctx, responseChannel, prompt, m)
 	default:
-		err = b.handleCompletionPrompt(ctx, responseChannel, sanitizedUserPrompt, threadPromptContext, m)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			_, discordErr := b.discordSession.ChannelMessageSend(responseChannel, "Whoops something went wrong processing that", discordgo.WithContext(ctx))
-			if discordErr != nil {
-				span.RecordError(err)
-				logger.ErrorContext(ctx, "Failed to notify discord channel of the error", slog.Any("error", err))
-			}
-			return
-		}
+		err = b.handleCompletionPrompt(ctx, responseChannel, prompt, threadPromptContext, m)
+	}
+	if err != nil {
+		b.reportError(ctx, span, responseChannel, failureMessage(intent, err), err)
+		return
 	}
 	span.SetStatus(codes.Ok, "Success")
 }
 
+// failureMessage is the text posted to the channel when handling a message of
+// the given intent failed with err.
+func failureMessage(intent messageIntent, err error) string {
+	if intent == intentChat {
+		return "Whoops something went wrong processing that"
+	}
+	return fmt.Sprintf("I fucked that up and threw it away. Sorry. (%s)", err.Error())
+}
+
+// reportError marks the span as failed and tells the channel that the request
+// failed. A failure to send that notice is recorded and logged as well.
+func (b *AIBot) reportError(ctx context.Context, span trace.Span, channel, userMessage string, err error) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	_, discordErr := b.discord.ChannelMessageSend(channel, userMessage, discordgo.WithContext(ctx))
+	if discordErr != nil {
+		span.RecordError(discordErr)
+		slog.Default().WithGroup("messageCreate").ErrorContext(ctx, "Failed to notify discord channel of the error", slog.Any("error", discordErr))
+	}
+}
+
 func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
-	_, err := b.discordSession.ChannelMessageSend("1091532074495787049", "Gah! I'm awake! How long was I out?!")
+	_, err := b.discord.ChannelMessageSend("1091532074495787049", "Gah! I'm awake! How long was I out?!")
 	if err != nil {
 		slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
 	}
@@ -251,7 +286,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		attribute.String("model", string(imageRequest.Model)),
 		attribute.String("size", string(imageRequest.Size)),
 	)
-	responseImage, err := b.openapiClient.Images.Generate(ctx, imageRequest)
+	responseImage, err := b.images.Generate(ctx, imageRequest)
 	if err != nil {
 		if isFatalOpenAIError(err) {
 			b.handleFatalOpenAIError(ctx, err)
@@ -309,7 +344,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 		}
 	}()
 
-	_, err = b.discordSession.ChannelMessageSendComplex(responseChannel, &discordgo.MessageSend{
+	_, err = b.discord.ChannelMessageSendComplex(responseChannel, &discordgo.MessageSend{
 		Content:   content,
 		Reference: m.Reference(),
 		File: &discordgo.File{
@@ -344,7 +379,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	if err != nil {
 		return fmt.Errorf("failed to fetch source image: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	// The Edit endpoint sends the image as multipart form data, which means the
 	// SDK reads the whole body up front — buffer it here so we can pass an
@@ -382,7 +417,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		attribute.String("size", string(editRequest.Size)),
 	)
 
-	responseImage, err := b.openapiClient.Images.Edit(ctx, editRequest)
+	responseImage, err := b.images.Edit(ctx, editRequest)
 	if err != nil {
 		if isFatalOpenAIError(err) {
 			b.handleFatalOpenAIError(ctx, err)
@@ -402,7 +437,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 // edit, preferring an attachment on the triggering message, then falling back
 // to an attachment on the message it's replying to (if that message came from
 // us). Returns "" when no candidate exists.
-func findEditSourceImage(s *discordgo.Session, m *discordgo.MessageCreate) string {
+func (b *AIBot) findEditSourceImage(m *discordgo.MessageCreate) string {
 	for _, att := range m.Attachments {
 		if isImageAttachment(att) {
 			return att.URL
@@ -413,12 +448,12 @@ func findEditSourceImage(s *discordgo.Session, m *discordgo.MessageCreate) strin
 	if ref == nil && m.MessageReference != nil && m.MessageReference.MessageID != "" {
 		// The gateway doesn't always inline ReferencedMessage — older messages
 		// or cache misses fall back to an explicit fetch.
-		fetched, err := s.ChannelMessage(m.MessageReference.ChannelID, m.MessageReference.MessageID)
+		fetched, err := b.discord.ChannelMessage(m.MessageReference.ChannelID, m.MessageReference.MessageID)
 		if err == nil {
 			ref = fetched
 		}
 	}
-	if ref == nil || ref.Author == nil || ref.Author.ID != s.State.User.ID {
+	if ref == nil || ref.Author == nil || ref.Author.ID != b.discord.BotUser().ID {
 		return ""
 	}
 	for _, att := range ref.Attachments {
@@ -503,7 +538,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	var responseText string
 	err = retry.Do(
 		func() error {
-			response, err := b.openapiClient.Responses.New(ctx, request)
+			response, err := b.responses.New(ctx, request)
 			if err != nil {
 				if isFatalOpenAIError(err) {
 					b.handleFatalOpenAIError(ctx, err)
@@ -515,7 +550,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 			responseText = response.OutputText()
 			if responseText == "" {
 				logger.WarnContext(ctx, "Empty response text from OpenAI", slog.Any("response", response))
-				return errors.New("Received an empty response from OpenAI")
+				return errors.New("received an empty response from OpenAI")
 			}
 			return nil
 		},
@@ -544,7 +579,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", warnErr))
 	}
 
-	_, err = b.discordSession.ChannelMessageSend(responseChannel, responseText, discordgo.WithContext(ctx))
+	_, err = b.discord.ChannelMessageSend(responseChannel, responseText, discordgo.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to respond to discord channel: %w", err)
 	}
@@ -554,23 +589,23 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 }
 
 // Create a new thread if requested, or load the context of a thread if already in one
-func (b *AIBot) handleThreading(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate) (responseChannel string, threadContext []storage.ConversationMessage, errResponse error) {
+func (b *AIBot) handleThreading(ctx context.Context, m *discordgo.MessageCreate) (responseChannel string, threadContext []storage.ConversationMessage, errResponse error) {
 	logger := slog.Default().WithGroup("handleThreading")
 	// Default to responding to the channel the message came from
 	responseChannel = m.ChannelID
 	isThreaded := false
-	wantThreaded := strings.Contains(m.Message.Content, "🧵")
+	wantThreaded := strings.Contains(m.Content, "🧵")
 
 	// The current "channel" may already be a thread
-	if ch, err := s.State.Channel(m.ChannelID); err == nil && ch.IsThread() {
+	if ch, err := b.discord.StateChannel(m.ChannelID); err == nil && ch.IsThread() {
 		isThreaded = true
 		responseChannel = ch.ID
 	}
 
 	// But if the user requested a thread, but we're not in one yet, create it
 	if wantThreaded && !isThreaded {
-		ch, err := s.MessageThreadStartComplex(m.ChannelID, m.ID, &discordgo.ThreadStart{
-			Name:                fmt.Sprintf("Conversation with %s", m.Message.Author.Username),
+		ch, err := b.discord.MessageThreadStartComplex(m.ChannelID, m.ID, &discordgo.ThreadStart{
+			Name:                fmt.Sprintf("Conversation with %s", m.Author.Username),
 			AutoArchiveDuration: 60,
 		}, discordgo.WithContext(ctx))
 		if err != nil {
@@ -616,7 +651,7 @@ func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 }
 
 func (b *AIBot) Shutdown() {
-	_, err := b.discordSession.ChannelMessageSend("1091532074495787049", "Here I go, shutting down again!")
+	_, err := b.discord.ChannelMessageSend("1091532074495787049", "Here I go, shutting down again!")
 	_, span := otel.GetTracerProvider().Tracer("AIBot").Start(b.botCtx, "Shutdown")
 	span.RecordError(err)
 	span.End()
