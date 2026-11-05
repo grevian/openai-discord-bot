@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -145,7 +146,7 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 		return intentEdit, stripEditTriggers(sanitizedUserPrompt)
 	case wantsDraw:
 		// Strip the prompt prefix out of the message
-		return intentDraw, strings.ReplaceAll(strings.ToLower(content), "draw me a picture of", "")
+		return intentDraw, stripDrawTriggers(sanitizedUserPrompt)
 	default:
 		return intentChat, sanitizedUserPrompt
 	}
@@ -220,19 +221,60 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 		err = b.handleCompletionPrompt(ctx, responseChannel, prompt, threadPromptContext, m)
 	}
 	if err != nil {
-		b.reportError(ctx, span, responseChannel, failureMessage(intent, err), err)
+		b.reportError(ctx, span, responseChannel, failureMessage(err), err)
 		return
 	}
 	span.SetStatus(codes.Ok, "Success")
 }
 
-// failureMessage is the text posted to the channel when handling a message of
-// the given intent failed with err.
-func failureMessage(intent messageIntent, err error) string {
-	if intent == intentChat {
-		return "Whoops something went wrong processing that"
+// User-facing failure messages. The full error goes to the logs and spans only.
+const (
+	msgInvalidRequest = "OpenAI couldn't process that request. It may have been blocked by its content policy, so try rewording it."
+	msgBusy           = "I'm a bit busy right now, please try again in a minute."
+	msgGeneric        = "Whoops, something went wrong processing that. Please try again."
+)
+
+// userError is an error whose message is safe and useful to show to the user.
+// Wrap with newUserError; detect with errors.As.
+type userError struct {
+	msg string
+	err error
+}
+
+func (e *userError) Error() string {
+	if e.err == nil {
+		return e.msg
 	}
-	return fmt.Sprintf("I fucked that up and threw it away. Sorry. (%s)", err.Error())
+	return e.err.Error()
+}
+func (e *userError) Unwrap() error       { return e.err }
+func (e *userError) UserMessage() string { return e.msg }
+
+// newUserError returns err annotated with a message to show the user.
+func newUserError(msg string, err error) error { return &userError{msg: msg, err: err} }
+
+// failureMessage is the text posted to the channel when handling a message
+// failed with err. It never includes the error's own text.
+func failureMessage(err error) string {
+	var ue *userError
+	if errors.As(err, &ue) {
+		return ue.UserMessage()
+	}
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		switch {
+		case apiErr.StatusCode == http.StatusTooManyRequests,
+			apiErr.StatusCode == http.StatusServiceUnavailable,
+			apiErr.StatusCode == 529,
+			apiErr.Code == "rate_limit_exceeded", apiErr.Code == "server_is_overloaded":
+			if apiErr.Code != "insufficient_quota" {
+				return msgBusy
+			}
+		case apiErr.Code == "content_policy_violation", apiErr.Code == "moderation_blocked":
+			return msgInvalidRequest
+		}
+	}
+	return msgGeneric
 }
 
 // reportError marks the span as failed and tells the channel that the request
@@ -413,7 +455,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		slog.Int("bytes", len(srcBytes)),
 		slog.String("content_type", srcContentType))
 	if srcContentType == "" {
-		return fmt.Errorf("source image is not a supported format (png/jpeg/webp)")
+		return newUserError("That image isn't a supported format. Please use png, jpeg or webp.", fmt.Errorf("source image is not a supported format (png/jpeg/webp)"))
 	}
 
 	fullPrompt := prompt
@@ -543,6 +585,16 @@ func isImageAttachment(att *discordgo.MessageAttachment) bool {
 		strings.HasSuffix(lower, ".jpeg") ||
 		strings.HasSuffix(lower, ".webp")
 }
+
+// stripDrawTriggers removes the draw triggers from a prompt, keeping the
+// user's original case.
+func stripDrawTriggers(prompt string) string {
+	out := strings.ReplaceAll(prompt, "🎨", "")
+	out = drawPhrase.ReplaceAllString(out, "")
+	return strings.TrimSpace(out)
+}
+
+var drawPhrase = regexp.MustCompile(`(?i)draw me a picture of`)
 
 func stripEditTriggers(prompt string) string {
 	out := strings.ReplaceAll(prompt, "✏️", "")
