@@ -272,11 +272,11 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 
 	// Request the image(s) from openAI
 	imageRequest := openai.ImageGenerateParams{
-		Prompt: fullPrompt,
-		N:      openai.Int(1),
-		User:   openai.String(m.Author.ID),
-		Size:   openai.ImageGenerateParamsSize1024x1024,
-		Model:  imageGenerateModel,
+		Prompt:           fullPrompt,
+		N:                openai.Int(1),
+		SafetyIdentifier: openai.String(m.Author.ID),
+		Size:             openai.ImageGenerateParamsSize1024x1024,
+		Model:            imageGenerateModel,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(imageRequest.Model)),
@@ -401,12 +401,12 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	// without it the form part is sent as application/octet-stream and the Edit
 	// endpoint rejects it. openai.File wires both onto the io.Reader.
 	editRequest := openai.ImageEditParams{
-		Image:  openai.ImageEditParamsImageUnion{OfFile: openai.File(bytes.NewReader(srcBytes), srcFilename, srcContentType)},
-		Prompt: fullPrompt,
-		N:      openai.Int(1),
-		User:   openai.String(m.Author.ID),
-		Size:   openai.ImageEditParamsSize1024x1024,
-		Model:  imageEditModel,
+		Image:            openai.ImageEditParamsImageUnion{OfFile: openai.File(bytes.NewReader(srcBytes), srcFilename, srcContentType)},
+		Prompt:           fullPrompt,
+		N:                openai.Int(1),
+		SafetyIdentifier: openai.String(m.Author.ID),
+		Size:             openai.ImageEditParamsSize1024x1024,
+		Model:            imageEditModel,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(editRequest.Model)),

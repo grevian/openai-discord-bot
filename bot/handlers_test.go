@@ -228,8 +228,8 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 	if !strings.HasPrefix(req.Prompt, testDrawing+" ") || !strings.HasSuffix(req.Prompt, " a cat") {
 		t.Errorf("prompt = %q", req.Prompt)
 	}
-	if req.User.Value != userID {
-		t.Errorf("user = %q", req.User.Value)
+	if req.SafetyIdentifier.Value != userID {
+		t.Errorf("safety identifier = %q", req.SafetyIdentifier.Value)
 	}
 
 	sent := tb.discord.sentMessages()

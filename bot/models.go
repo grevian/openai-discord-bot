@@ -10,8 +10,7 @@ import (
 const (
 	// chatModel answers text prompts through the Responses API. It is a
 	// reasoning model, so chatReasoningEffort must be set on every request.
-	// Written as a string because openai-go v3.64.3 has no constant for it.
-	chatModel           = "gpt-6-luna"
+	chatModel           = shared.ChatModelGPT6Luna
 	chatReasoningEffort = shared.ReasoningEffortLow
 
 	// imageGenerateModel draws pictures for "draw me ..." requests.
