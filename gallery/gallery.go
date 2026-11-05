@@ -209,7 +209,7 @@ type BackfillItem struct {
 // update, using the same sidecars, eligibility rules, prompt cleaning and
 // conditional-write logic as Publish. Items whose guild is not eligible, or
 // whose key is not under that guild's prefix (so never a private-chat/ key),
-// are skipped. Entries and sidecars that already exist win: a backfill never
+// are skipped. Manifest entries and sidecars that already exist win: a backfill never
 // overwrites something the bot published live. It returns the entries newly
 // added, and running it twice is harmless.
 func (g *Gallery) PublishBackfill(ctx context.Context, items []BackfillItem) ([]Entry, error) {
@@ -239,11 +239,10 @@ func (g *Gallery) PublishBackfill(ctx context.Context, items []BackfillItem) ([]
 			return nil, fmt.Errorf("marshal sidecar: %w", err)
 		}
 		err = g.store.Put(ctx, ItemPrefix+e.ID+".json", sidecar, PutOptions{ContentType: "application/json", IfNoneMatch: true})
-		if errors.Is(err, ErrConflict) {
-			// A sidecar already exists (the bot published it live): keep it.
-			continue
-		}
-		if err != nil {
+		// An existing sidecar is kept. The entry is still added: if an earlier
+		// run wrote sidecars but failed on the manifest, a re-run must finish
+		// the job. Live manifest entries are protected by the have check above.
+		if err != nil && !errors.Is(err, ErrConflict) {
 			return nil, fmt.Errorf("write sidecar: %w", err)
 		}
 		entries = append(entries, e)

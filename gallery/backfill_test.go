@@ -98,15 +98,19 @@ func TestPublishBackfillKeepsLiveEntries(t *testing.T) {
 			t.Errorf("live entry overwritten: %+v", e)
 		}
 	}
-	// A sidecar that exists but is absent from the manifest is kept too.
+	// A sidecar that exists but is absent from the manifest (a failed earlier
+	// run) is kept, and the entry is still published.
 	store2 := newMemStore()
 	g2 := New(Config{Enabled: true}, store2)
 	id := key[len("111/"):]
 	_ = store2.Put(context.Background(), ItemPrefix+id+".json", []byte(`{"prompt":"orig"}`), PutOptions{})
-	if got, err := g2.PublishBackfill(context.Background(), items[:1]); err != nil || len(got) != 0 {
+	if got, err := g2.PublishBackfill(context.Background(), items[:1]); err != nil || len(got) != 1 {
 		t.Fatalf("got %v, %v", got, err)
 	}
 	if b, _, _ := store2.Get(context.Background(), ItemPrefix+id+".json"); string(b) != `{"prompt":"orig"}` {
 		t.Errorf("sidecar overwritten: %s", b)
+	}
+	if m := store2.manifest(t); len(m.Items) != 1 {
+		t.Errorf("entry not published: %+v", m.Items)
 	}
 }
