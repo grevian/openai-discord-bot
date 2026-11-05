@@ -323,13 +323,17 @@ func (g *Gallery) apply(m Manifest, entry Entry) Manifest {
 // numeric IDs, which must not be published.
 var mentionRE = regexp.MustCompile(`<(?:@[!&]?|#)\d+>`)
 
-// broadcastRE matches @everyone and @here, with any number of @s and whatever
-// precedes them ("x@@here" pings too), which would ping a whole channel if the
-// text were ever copied back into Discord. Matching unconditionally is
-// deliberate: it also turns an email like me@here.example into mehere.example,
-// which is harmless for a caption. The page is inert, so this is hygiene
-// rather than a security control.
-var broadcastRE = regexp.MustCompile(`(?i)@+(everyone|here)\b`)
+// broadcastRE matches @everyone and @here (any number of @s) at the start of
+// the text or after a character that is not a letter, digit or underscore.
+// Copied back into Discord they would ping a whole channel. The page is inert,
+// so this is hygiene rather than a security control.
+//
+// The prefix rule keeps email addresses intact: me@here.example and
+// user@everyone.com have a letter directly before the @, so they do not match.
+// The same rule means "x@@everyone" (a letter directly before the @s) is not
+// fully scrubbed and comes out as "x@everyone", and "@here@everyone" comes out
+// as "here@everyone". Both are accepted: the output is only ever shown as text.
+var broadcastRE = regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}_])@+(everyone|here)\b`)
 
 // CleanPrompt prepares a user's prompt for publication: Discord mentions are
 // replaced (they carry user IDs), @everyone and @here lose their @, whitespace
@@ -337,8 +341,8 @@ var broadcastRE = regexp.MustCompile(`(?i)@+(everyone|here)\b`)
 // the page renders prompts with textContent and the manifest is JSON, which
 // escapes <, > and &.
 func CleanPrompt(p string) string {
-	p = mentionRE.ReplaceAllString(p, "someone")
-	p = broadcastRE.ReplaceAllString(p, "$1")
+	p = mentionRE.ReplaceAllString(p, " someone ")
+	p = broadcastRE.ReplaceAllString(p, "$1$2")
 	p = strings.Join(strings.Fields(p), " ")
 	if utf8.RuneCountInString(p) > maxPromptRunes {
 		r := []rune(p)
