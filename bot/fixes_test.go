@@ -374,5 +374,51 @@ func TestStalledSourceImageDownloadTimesOut(t *testing.T) {
 	}
 	if sent := tb.discord.sentMessages(); len(sent) != 1 || !strings.Contains(sent[0].Content, "failed to read source image") {
 		t.Fatalf("expected a read failure notice, got %+v", sent)
+
+func TestReadyAnnouncesOncePerProcess(t *testing.T) {
+	tb := newTestBot(t)
+	tb.bot.ReadyHandler(nil, &discordgo.Ready{})
+	tb.bot.ReadyHandler(nil, &discordgo.Ready{}) // reconnect
+	if got := tb.discord.sentMessages(); len(got) != 1 {
+		t.Fatalf("want 1 startup message, got %+v", got)
+	}
+}
+
+func TestDrainWaitsForInflightAndRejectsNew(t *testing.T) {
+	tb := newTestBot(t)
+	if !tb.bot.beginRequest() {
+		t.Fatal("request rejected before drain")
+	}
+	drained := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		drained <- tb.bot.Drain(ctx)
+	}()
+	select {
+	case err := <-drained:
+		t.Fatalf("Drain returned with a handler in flight: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	// New messages are ignored while draining.
+	tb.bot.messageCreate(nil, &discordgo.MessageCreate{Message: &discordgo.Message{
+		Author: &discordgo.User{ID: "u"}, Mentions: []*discordgo.User{{ID: botID}}, ChannelID: "c", Content: "hi",
+	}})
+	if got := tb.discord.sentMessages(); len(got) != 0 {
+		t.Fatalf("message handled during drain: %+v", got)
+	}
+	tb.bot.inflight.Done()
+	if err := <-drained; err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+}
+
+func TestDrainTimesOut(t *testing.T) {
+	tb := newTestBot(t)
+	tb.bot.beginRequest() // never finishes
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := tb.bot.Drain(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want deadline exceeded, got %v", err)
 	}
 }

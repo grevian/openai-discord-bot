@@ -39,6 +39,16 @@ type AIBot struct {
 	storage             threadStore
 	imageStorage        imageStore
 	timeouts            timeouts
+
+	// readyOnce makes the startup notice go out once per process: discordgo
+	// fires Ready again after every reconnect.
+	readyOnce sync.Once
+
+	// lifeMu guards draining; inflight counts handlers admitted by
+	// beginRequest and not yet finished.
+	lifeMu   sync.Mutex
+	draining bool
+	inflight sync.WaitGroup
 }
 
 // promptFile is the on-disk format of prompts/danbo.json.
@@ -154,6 +164,11 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 // own deadline so a hung upstream cannot pin the handler goroutine forever.
 func (b *AIBot) messageCreate(_ *discordgo.Session, m *discordgo.MessageCreate) {
 	defer recoverHandler("messageCreate")
+	if !b.beginRequest() {
+		slog.Default().WithGroup("messageCreate").Info("Shutting down; ignoring new message")
+		return
+	}
+	defer b.inflight.Done()
 	ctx, cancel := withTimeout(context.Background(), b.timeouts.Request)
 	defer cancel()
 	b.handleMessage(ctx, m)
@@ -251,9 +266,45 @@ func (b *AIBot) reportError(ctx context.Context, span trace.Span, channel, userM
 func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	defer recoverHandler("ReadyHandler")
 	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
-	err := b.sendMessage(context.Background(), "1091532074495787049", "Gah! I'm awake! How long was I out?!")
-	if err != nil {
-		slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
+	// Ready fires again on every reconnect; only announce the first one.
+	b.readyOnce.Do(func() {
+		err := b.sendMessage(context.Background(), "1091532074495787049", "Gah! I'm awake! How long was I out?!")
+		if err != nil {
+			slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
+		}
+	})
+}
+
+// beginRequest admits one handler. It returns false once draining has begun;
+// otherwise the caller must call b.inflight.Done when finished.
+func (b *AIBot) beginRequest() bool {
+	b.lifeMu.Lock()
+	defer b.lifeMu.Unlock()
+	if b.draining {
+		return false
+	}
+	b.inflight.Add(1)
+	return true
+}
+
+// Drain stops the bot accepting new messages and waits for in-flight handlers
+// to finish, or for ctx to expire. It returns ctx's error if handlers were
+// still running.
+func (b *AIBot) Drain(ctx context.Context) error {
+	b.lifeMu.Lock()
+	b.draining = true
+	b.lifeMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		b.inflight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

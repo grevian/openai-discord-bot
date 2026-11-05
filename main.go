@@ -13,6 +13,9 @@ import (
 	"openai-discord-bot/config"
 )
 
+// shutdownDrainTimeout bounds how long shutdown waits for in-flight messages.
+const shutdownDrainTimeout = 30 * time.Second
+
 func main() {
 	serviceCtx, cancel := context.WithCancel(context.Background())
 	config.Configure(serviceCtx)
@@ -28,12 +31,6 @@ func main() {
 
 		log.Fatal("Failed to connect to Discord", err)
 	}
-	defer func() {
-		err = discordSession.Close()
-		if err != nil {
-			logger.Error("Error closing Discord connection", slog.Any("error", err))
-		}
-	}()
 
 	logger.Info("connecting to OpenAI")
 	openapiClient, err := config.GetOpenAISession()
@@ -55,8 +52,19 @@ func main() {
 	}
 
 	logger.Info("Gracefully shutting down")
+	// Stop taking new messages and let in-flight ones finish. Note that
+	// `docker stop` (bot.service ExecStop) sends SIGKILL after its own grace
+	// period (10s by default), which cuts this budget short unless it is
+	// raised with `-t`.
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), shutdownDrainTimeout)
+	if err := botInstance.Drain(drainCtx); err != nil {
+		logger.Warn("Gave up waiting for in-flight messages", slog.Any("error", err))
+	}
+	drainCancel()
 	botInstance.Shutdown()
-	time.Sleep(time.Second * 1)
+	if err := discordSession.Close(); err != nil {
+		logger.Error("Error closing Discord connection", slog.Any("error", err))
+	}
 
 	// Terminate the service context, which should flush any open logs/traces/etc.
 	cancel()
