@@ -44,10 +44,6 @@ func main() {
 	botInstance := bot.NewAIBot(serviceCtx, cancel, openapiClient, discordSession, config.GetStorage(), config.GetImageStorage())
 
 	logger.Info("Starting bot")
-	err = botInstance.Go()
-	if err != nil {
-		log.Fatal("Failed to run the bot!", slog.Any("error", err))
-	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
