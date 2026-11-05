@@ -59,8 +59,8 @@ func (s *Storage) GetThread(ctx context.Context, threadId string) ([]Conversatio
 		ExpressionAttributeValues: expr.Values(),
 		KeyConditionExpression:    expr.KeyCondition(),
 		// Newest first, so the limit keeps the most recent messages; reversed below.
-		ScanIndexForward:          aws.Bool(false),
-		Limit:                     aws.Int32(maxThreadMessages),
+		ScanIndexForward: aws.Bool(false),
+		Limit:            aws.Int32(maxThreadMessages),
 	})
 	if err != nil {
 		return responseMessages, err
