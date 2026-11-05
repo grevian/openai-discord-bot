@@ -22,6 +22,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -316,11 +317,11 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 
 	// Request the image(s) from openAI
 	imageRequest := openai.ImageGenerateParams{
-		Prompt: fullPrompt,
-		N:      openai.Int(1),
-		User:   openai.String(m.Author.ID),
-		Size:   openai.ImageGenerateParamsSize1024x1024,
-		Model:  openai.ImageModelGPTImage2,
+		Prompt:           fullPrompt,
+		N:                openai.Int(1),
+		SafetyIdentifier: openai.String(m.Author.ID),
+		Size:             openai.ImageGenerateParamsSize1024x1024,
+		Model:            imageGenerateModel,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(imageRequest.Model)),
@@ -462,12 +463,12 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	// without it the form part is sent as application/octet-stream and the Edit
 	// endpoint rejects it. openai.File wires both onto the io.Reader.
 	editRequest := openai.ImageEditParams{
-		Image:  openai.ImageEditParamsImageUnion{OfFile: openai.File(bytes.NewReader(srcBytes), srcFilename, srcContentType)},
-		Prompt: fullPrompt,
-		N:      openai.Int(1),
-		User:   openai.String(m.Author.ID),
-		Size:   openai.ImageEditParamsSize1024x1024,
-		Model:  openai.ImageModelGPTImage1,
+		Image:            openai.ImageEditParamsImageUnion{OfFile: openai.File(bytes.NewReader(srcBytes), srcFilename, srcContentType)},
+		Prompt:           fullPrompt,
+		N:                openai.Int(1),
+		SafetyIdentifier: openai.String(m.Author.ID),
+		Size:             openai.ImageEditParamsSize1024x1024,
+		Model:            imageEditModel,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(editRequest.Model)),
@@ -624,8 +625,9 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	addMsg("user", sanitizedUserPrompt)
 
 	request := responses.ResponseNewParams{
-		Model:        openai.ChatModelGPT4oMini,
+		Model:        chatModel,
 		Instructions: openai.String(b.systemInstructions),
+		Reasoning:    shared.ReasoningParam{Effort: chatReasoningEffort},
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: inputItems,
 		},

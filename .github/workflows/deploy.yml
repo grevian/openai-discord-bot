@@ -12,7 +12,16 @@ env:
   SSM_IMAGE_TAG_PARAM: /openai-discord-bot/prod/image_tag
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    with:
+      # Known-vulnerable dependencies must not block a hotfix deploy; govulncheck gates PRs instead
+      run-govulncheck: false
+    permissions:
+      contents: read
+
   deploy:
+    needs: ci
     environment: production
     runs-on: ubuntu-24.04-arm
     concurrency: production
