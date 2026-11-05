@@ -429,3 +429,18 @@ func TestDrainTimesOut(t *testing.T) {
 		t.Fatal("leftover handler context was not cancelled")
 	}
 }
+
+func TestMessageCreateReleasesInflightSlot(t *testing.T) {
+	for _, panics := range []bool{false, true} {
+		tb := newTestBot(t)
+		if panics {
+			tb.discord.self = nil // handleMessage dereferences it and panics
+		}
+		tb.bot.messageCreate(nil, mention("hello"))
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := tb.bot.Drain(ctx); err != nil {
+			t.Errorf("panics=%v: Drain did not return promptly: %v", panics, err)
+		}
+		cancel()
+	}
+}
