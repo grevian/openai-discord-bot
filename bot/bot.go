@@ -241,7 +241,12 @@ type userError struct {
 	err error
 }
 
-func (e *userError) Error() string       { return e.err.Error() }
+func (e *userError) Error() string {
+	if e.err == nil {
+		return e.msg
+	}
+	return e.err.Error()
+}
 func (e *userError) Unwrap() error       { return e.err }
 func (e *userError) UserMessage() string { return e.msg }
 
@@ -265,8 +270,7 @@ func failureMessage(err error) string {
 			if apiErr.Code != "insufficient_quota" {
 				return msgBusy
 			}
-		case apiErr.StatusCode == http.StatusBadRequest,
-			apiErr.Code == "content_policy_violation", apiErr.Code == "moderation_blocked":
+		case apiErr.Code == "content_policy_violation", apiErr.Code == "moderation_blocked":
 			return msgInvalidRequest
 		}
 	}

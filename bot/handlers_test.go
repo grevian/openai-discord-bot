@@ -108,7 +108,7 @@ func TestChatCompletionStorageFailureIsNotFatal(t *testing.T) {
 func TestChatCompletionFailureNotifiesChannel(t *testing.T) {
 	tb := newTestBot(t)
 	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
-		return nil, &openai.Error{StatusCode: http.StatusBadRequest}
+		return nil, &openai.Error{StatusCode: http.StatusBadRequest, Code: "content_policy_violation"}
 	}
 	tb.bot.handleMessage(context.Background(), mention("hello"))
 	got := tb.discord.sentMessages()

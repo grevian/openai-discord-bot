@@ -158,11 +158,12 @@ func TestFailureMessage(t *testing.T) {
 		{"quota is not busy", &openai.Error{StatusCode: http.StatusTooManyRequests, Code: "insufficient_quota"}, msgGeneric},
 		{"content policy", &openai.Error{StatusCode: http.StatusBadRequest, Code: "content_policy_violation"}, msgInvalidRequest},
 		{"moderation", &openai.Error{StatusCode: http.StatusBadRequest, Code: "moderation_blocked"}, msgInvalidRequest},
-		{"wrapped invalid", fmt.Errorf("w: %w", &openai.Error{StatusCode: http.StatusBadRequest}), msgInvalidRequest},
+		{"wrapped content policy", fmt.Errorf("w: %w", &openai.Error{StatusCode: http.StatusBadRequest, Code: "content_policy_violation"}), msgInvalidRequest},
+		{"bare 400", &openai.Error{StatusCode: http.StatusBadRequest}, msgGeneric},
+		{"user error nil cause", newUserError("hi", nil), "hi"},
 		{"500", &openai.Error{StatusCode: http.StatusInternalServerError}, msgGeneric},
 		{"user error", fmt.Errorf("w: %w", newUserError("too big", errors.New("internal"))), "too big"},
 		{"401", &openai.Error{StatusCode: http.StatusUnauthorized}, msgGeneric},
-		{"user error", fmt.Errorf("w: %w", newUserError("too big", errors.New("internal"))), "too big"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
