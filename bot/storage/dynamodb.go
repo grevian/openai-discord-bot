@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/viper"
 )
 
+const maxThreadMessages = 100
+
 type Storage struct {
 	client    *dynamodb.Client
 	tableName string
@@ -56,7 +58,9 @@ func (s *Storage) GetThread(ctx context.Context, threadId string) ([]Conversatio
 		ExpressionAttributeNames:  expr.Names(),
 		ExpressionAttributeValues: expr.Values(),
 		KeyConditionExpression:    expr.KeyCondition(),
-		Limit:                     aws.Int32(100),
+		// Newest first, so the limit keeps the most recent messages; reversed below.
+		ScanIndexForward: aws.Bool(false),
+		Limit:            aws.Int32(maxThreadMessages),
 	})
 	if err != nil {
 		return responseMessages, err
@@ -69,8 +73,14 @@ func (s *Storage) GetThread(ctx context.Context, threadId string) ([]Conversatio
 		return responseMessages, err
 	}
 
-	// Concatenate the list of messages together and return them
-	for t := range threadMessages {
+	return threadToConversation(threadMessages), nil
+}
+
+// threadToConversation converts newest-first stored messages into a
+// chronological (oldest-first) conversation.
+func threadToConversation(threadMessages []threadMessage) []ConversationMessage {
+	var responseMessages []ConversationMessage
+	for t := len(threadMessages) - 1; t >= 0; t-- {
 		message := ConversationMessage{
 			Content: threadMessages[t].Message,
 		}
@@ -81,7 +91,7 @@ func (s *Storage) GetThread(ctx context.Context, threadId string) ([]Conversatio
 		}
 		responseMessages = append(responseMessages, message)
 	}
-	return responseMessages, nil
+	return responseMessages
 }
 
 func (s *Storage) AddThreadMessage(ctx context.Context, threadId string, messageSource string, message string) error {

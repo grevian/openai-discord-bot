@@ -29,21 +29,21 @@ docker build -t openaibot . && docker run --rm -it openaibot \
 
 ## Deployment
 
-Infrastructure is managed by Terraform under [`terraform/`](terraform/). A single Fargate Spot service runs in `ca-central-1`, fronted by CloudFront on `sillybullshit.click` for image fetches. State lives in an S3 backend (`openai-discord-bot-tfstate-537108148763`) with native locking.
+Infrastructure is managed by Terraform under [`terraform/`](terraform/). A single EC2 instance (Graviton, `t4g.nano` by default, Amazon Linux 2023) runs the bot in Docker, with an OpenTelemetry collector (`otelcol-contrib`) as a systemd service, in `ca-central-1`, fronted by CloudFront on `sillybullshit.click` for image fetches. State lives in an S3 backend (`openai-discord-bot-tfstate-537108148763`) with native locking.
 
-Pushes to `master` trigger [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), which OIDC-assumes a role with `AdministratorAccess`, builds and pushes the image to ECR tagged with the commit SHA, then runs `terraform apply -var="image_tag=<sha>"`. To deploy manually:
+Pushes to `master` trigger [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), which OIDC-assumes a role with `AdministratorAccess`, builds and pushes the arm64 image to GitHub Container Registry (`ghcr.io`) tagged with the commit SHA and `latest`, writes the SHA to the `/openai-discord-bot/prod/image_tag` SSM parameter, and uses SSM Run Command to restart the `bot` systemd service on the instance, which pulls that tag. Terraform is not run by the deploy workflow. To change infrastructure manually:
 
 ```
 cd terraform
 terraform init
-terraform apply -var="image_tag=$(git rev-parse --short HEAD)"
+terraform apply
 ```
 
-Secrets live in SSM SecureString parameters and are referenced by the ECS task definition — values are populated out-of-band (not in Terraform state):
+Secrets live in SSM SecureString parameters and are read by the instance at startup — values are populated out-of-band (not in Terraform state):
 
 - `/openai-discord-bot/prod/discord_token`
 - `/openai-discord-bot/prod/openai_token`
-- `/openai-discord-bot/prod/otel_config` (ADOT collector YAML)
+- `/openai-discord-bot/prod/honeycomb_api_key` (read by the collector start script)
 
 ## Attaching to Discord
 

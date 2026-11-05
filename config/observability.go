@@ -44,20 +44,16 @@ func configureTracing(serviceCtx context.Context) error {
 	otel.SetTracerProvider(traceProvider)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
-	// Use a context.Background here to allow us an extra few seconds to flush data once the
-	// service context itself does terminate
-	err = traceExporter.Start(detectionCtx)
-	if err != nil {
-		return fmt.Errorf("failed to create new OTLP trace exporter: %w", err)
-	}
-
 	// Try to ensure any pending telemetry gets flushed when the service context terminates
 	go func(lifecycleContext context.Context) {
 		<-lifecycleContext.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 		defer cancel()
-		err := traceExporter.Shutdown(shutdownCtx)
-		slog.Default().ErrorContext(serviceCtx, "Failed to flush telemetry data", slog.Any("error", err))
+		// otlptracegrpc.New already started the exporter; shutting down the provider flushes
+		// pending spans and then shuts the exporter down too.
+		if err := traceProvider.Shutdown(shutdownCtx); err != nil {
+			slog.Default().Error("Failed to flush telemetry data", slog.Any("error", err))
+		}
 	}(serviceCtx)
 
 	return nil
