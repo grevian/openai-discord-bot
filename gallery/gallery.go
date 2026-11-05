@@ -197,6 +197,45 @@ func (g *Gallery) Publish(ctx context.Context, s Submission) error {
 	return g.addToManifest(ctx, entry)
 }
 
+// BackfillItem is an already-stored image to publish after the fact. Unlike a
+// live Submission it carries the time the image was made, because that is no
+// longer "now".
+type BackfillItem struct {
+	Submission
+	Created time.Time
+}
+
+// PublishBackfill publishes many existing images with a single manifest
+// update, using the same sidecars, eligibility rules, prompt cleaning and
+// conditional-write logic as Publish. Items whose guild is not eligible are
+// skipped. It returns the entries that were published. Entries already in the
+// manifest are kept and merged by ID, so running it twice is harmless.
+func (g *Gallery) PublishBackfill(ctx context.Context, items []BackfillItem) ([]Entry, error) {
+	var entries []Entry
+	for _, it := range items {
+		if !g.cfg.Eligible(it.GuildID) {
+			continue
+		}
+		e, err := g.entryFor(it.Submission)
+		if err != nil {
+			return nil, err
+		}
+		e.Created = it.Created.UTC().Truncate(time.Second)
+		sidecar, err := json.Marshal(e)
+		if err != nil {
+			return nil, fmt.Errorf("marshal sidecar: %w", err)
+		}
+		if err := g.store.Put(ctx, ItemPrefix+e.ID+".json", sidecar, PutOptions{ContentType: "application/json"}); err != nil {
+			return nil, fmt.Errorf("write sidecar: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	return entries, g.addToManifest(ctx, entries...)
+}
+
 // entryFor builds the public record for a submission.
 func (g *Gallery) entryFor(s Submission) (Entry, error) {
 	id := s.ImageKey
@@ -233,7 +272,7 @@ func (g *Gallery) entryFor(s Submission) (Entry, error) {
 //     write, and we re-read, re-apply the entry to the fresh manifest and try
 //     again. Applying is idempotent (entries are merged by ID), so a retry can
 //     never duplicate an entry.
-func (g *Gallery) addToManifest(ctx context.Context, entry Entry) error {
+func (g *Gallery) addToManifest(ctx context.Context, entries ...Entry) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -253,7 +292,10 @@ func (g *Gallery) addToManifest(ctx context.Context, entry Entry) error {
 		if err != nil {
 			return err
 		}
-		next := g.apply(current, entry)
+		next := current
+		for _, e := range entries {
+			next = g.apply(next, e)
+		}
 		body, err := json.Marshal(next)
 		if err != nil {
 			return fmt.Errorf("marshal manifest: %w", err)
