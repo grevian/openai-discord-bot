@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression v1.10.5
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.72.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.0
+	github.com/aws/smithy-go v1.28.7
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/openai/openai-go/v3 v3.91.1
 	github.com/segmentio/ksuid v1.0.4
@@ -20,7 +21,6 @@ require (
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.47.0
-	go.opentelemetry.io/otel/log v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/sdk/log v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
@@ -45,7 +45,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.38.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.4 // indirect
-	github.com/aws/smithy-go v1.28.7 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
@@ -69,6 +68,7 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect
+	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect

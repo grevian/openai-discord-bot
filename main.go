@@ -43,6 +43,19 @@ func main() {
 
 	botInstance := bot.NewAIBot(serviceCtx, cancel, openapiClient, discordSession, config.GetStorage(), config.GetImageStorage())
 
+	if g := config.GetGallery(); g != nil {
+		botInstance.SetGallery(g)
+		// Deploying the bot deploys the gallery page. Best-effort and off the
+		// startup path: a failure leaves the previous page in place.
+		go func() {
+			ctx, cancel := context.WithTimeout(serviceCtx, 30*time.Second)
+			defer cancel()
+			if err := g.PublishSite(ctx); err != nil {
+				logger.Error("failed to publish the gallery page", slog.Any("error", err))
+			}
+		}()
+	}
+
 	logger.Info("Starting bot")
 
 	stop := make(chan os.Signal, 1)
