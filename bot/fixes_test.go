@@ -374,6 +374,8 @@ func TestStalledSourceImageDownloadTimesOut(t *testing.T) {
 	}
 	if sent := tb.discord.sentMessages(); len(sent) != 1 || !strings.Contains(sent[0].Content, "failed to read source image") {
 		t.Fatalf("expected a read failure notice, got %+v", sent)
+	}
+}
 
 func TestReadyAnnouncesOncePerProcess(t *testing.T) {
 	tb := newTestBot(t)
