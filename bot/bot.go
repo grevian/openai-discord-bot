@@ -29,6 +29,17 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// Settings are the operator-specific values the bot needs at runtime. They
+// are loaded and validated by the config package.
+type Settings struct {
+	// OperatorChannelID is the Discord channel that receives the startup and
+	// shutdown notices.
+	OperatorChannelID string
+	// ImageBaseURL is the public origin that archived images are served from,
+	// without a trailing slash. An image key is appended to it.
+	ImageBaseURL string
+}
+
 type AIBot struct {
 	images              imageAPI
 	responses           responsesAPI
@@ -41,6 +52,8 @@ type AIBot struct {
 	storage             threadStore
 	imageStorage        imageStore
 	timeouts            timeouts
+	operatorChannelID   string
+	imageBaseURL        string
 
 	// readyOnce makes the startup notice go out once per process: discordgo
 	// fires Ready again after every reconnect.
@@ -92,7 +105,7 @@ func isFatalOpenAIError(err error) bool {
 	return apiErr.Code == "insufficient_quota" || apiErr.Code == "invalid_api_key"
 }
 
-func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage) *AIBot {
+func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage, settings Settings) *AIBot {
 	prompt, err := loadPromptFile("prompts/danbo.json")
 	if err != nil {
 		log.Panic(err)
@@ -110,6 +123,8 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 		storage:             threadStorage,
 		imageStorage:        imageStorage,
 		timeouts:            defaultTimeouts(),
+		operatorChannelID:   settings.OperatorChannelID,
+		imageBaseURL:        settings.ImageBaseURL,
 	}
 
 	// TODO Wire up more handlers
@@ -328,7 +343,7 @@ func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
 	// Ready fires again on every reconnect; only announce the first one.
 	b.readyOnce.Do(func() {
-		err := b.sendMessage(context.Background(), "1091532074495787049", "Gah! I'm awake! How long was I out?!")
+		err := b.sendMessage(context.Background(), b.operatorChannelID, "Gah! I'm awake! How long was I out?!")
 		if err != nil {
 			slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
 		}
@@ -500,7 +515,7 @@ func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChann
 		return
 	}
 
-	imageUrl := fmt.Sprintf("https://sillybullshit.click/%s", imageKey)
+	imageUrl := fmt.Sprintf("%s/%s", b.imageBaseURL, imageKey)
 
 	if err := b.addThreadMessage(ctx, responseChannel, "Bot", imageUrl); err != nil {
 		span.RecordError(err)
@@ -837,7 +852,7 @@ func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 // Shutdown tells the operator the bot is going away. ctx bounds the goodbye
 // message; the bot context is not used for it as it may already be cancelled.
 func (b *AIBot) Shutdown(ctx context.Context) {
-	err := b.sendMessage(ctx, "1091532074495787049", "Here I go, shutting down again!")
+	err := b.sendMessage(ctx, b.operatorChannelID, "Here I go, shutting down again!")
 	_, span := otel.GetTracerProvider().Tracer("AIBot").Start(b.botCtx, "Shutdown")
 	span.RecordError(err)
 	span.End()

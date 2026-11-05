@@ -34,6 +34,10 @@ const (
 	threadID    = "thread-1"
 	testSysInst = "you are danbo"
 	testDrawing = "in the danbo style:"
+	// Operator settings deliberately differ from the production defaults so
+	// the tests fail if the bot ignores its configuration.
+	testOperatorChannel = "operator-chan-1"
+	testImageBaseURL    = "https://images.test"
 )
 
 // pngBytes is a minimal payload that http.DetectContentType sniffs as PNG.
@@ -472,9 +476,11 @@ func newTestBot(t *testing.T) *testBot {
 			{Role: "user", Content: "example question"},
 			{Role: "assistant", Content: "example answer"},
 		},
-		storage:      tb.threads,
-		imageStorage: tb.imgStore,
-		timeouts:     defaultTimeouts(),
+		storage:           tb.threads,
+		imageStorage:      tb.imgStore,
+		timeouts:          defaultTimeouts(),
+		operatorChannelID: testOperatorChannel,
+		imageBaseURL:      testImageBaseURL,
 	}
 	return tb
 }
