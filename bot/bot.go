@@ -137,7 +137,7 @@ const maxEditSourceBytes = 50_000_000
 
 // errSourceImageTooLarge is returned when the source image to edit is at or
 // over maxEditSourceBytes. The message is shown to the user as is.
-var errSourceImageTooLarge = newUserError("That image is too large to edit (the limit is 50MB).",
+var errSourceImageTooLarge = newUserError("That image is too large for me to edit (the limit is 50MB). Big files scare me too. Please send a smaller one.",
 	errors.New("source image too large"))
 
 // classifyMessage decides what a message is asking for and returns the prompt
@@ -241,9 +241,9 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 
 // User-facing failure messages. The full error goes to the logs and spans only.
 const (
-	msgInvalidRequest = "OpenAI couldn't process that request. It may have been blocked by its content policy, so try rewording it."
-	msgBusy           = "I'm a bit busy right now, please try again in a minute."
-	msgGeneric        = "Whoops, something went wrong processing that. Please try again."
+	msgInvalidRequest = "OpenAI's content policy blocked that one. I've seen worse in Thunder Bay, but I can't make it. Try rewording it, maybe something less grim."
+	msgBusy           = "Ugh, I'm swamped right now, and I have a feeling it'll stay that way. Please try again in a minute."
+	msgGeneric        = "Gah! Something broke while I was working on that, and it's probably my fault. Please try again."
 )
 
 // userError is an error whose message is safe and useful to show to the user.
@@ -467,7 +467,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		slog.Int("bytes", len(srcBytes)),
 		slog.String("content_type", srcContentType))
 	if srcContentType == "" {
-		return newUserError("That image isn't a supported format. Please use png, jpeg or webp.", fmt.Errorf("source image is not a supported format (png/jpeg/webp)"))
+		return newUserError("That image isn't a supported format. Please use png, jpeg or webp. Nothing else ever works out for me anyway.", fmt.Errorf("source image is not a supported format (png/jpeg/webp)"))
 	}
 
 	fullPrompt := prompt
