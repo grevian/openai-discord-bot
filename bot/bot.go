@@ -341,6 +341,8 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// This goroutine is outside the handler's recover, so it needs its own.
+		defer recoverHandler("archiveImage")
 		b.archiveImage(ctx, span, responseChannel, m.GuildID, image)
 	}()
 

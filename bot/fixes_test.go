@@ -290,3 +290,89 @@ func TestCompletionRetriesOnlyInTheSDK(t *testing.T) {
 		t.Errorf("unexpected messages %+v", got)
 	}
 }
+
+// --- Review follow-ups ----------------------------------------------------
+
+func TestArchivePanicDoesNotEscape(t *testing.T) {
+	tb := newTestBot(t)
+	tb.imgStore.onStore = func(context.Context) { panic("s3 sdk blew up") }
+	tb.images.generate = func(context.Context, openai.ImageGenerateParams) (*openai.ImagesResponse, error) {
+		return imageResponse(base64.StdEncoding.EncodeToString(pngBytes)), nil
+	}
+	// A panic in the S3 goroutine would crash the test binary; reaching the
+	// assertions at all is the main check.
+	tb.bot.messageCreate(nil, mention("🎨 a cat"))
+	if sent := tb.discord.sentMessages(); len(sent) != 1 || !bytes.Equal(sent[0].File, pngBytes) {
+		t.Fatalf("expected the image in Discord despite the S3 panic, got %+v", sent)
+	}
+}
+
+func TestRequestDeadlineDefaultsToFiveMinutes(t *testing.T) {
+	if got := defaultTimeouts().Request; got != 5*time.Minute {
+		t.Fatalf("default request timeout = %v, want 5m", got)
+	}
+
+	tb := newTestBot(t)
+	// No per-call limit, so the deadline the OpenAI call sees is the request's.
+	tb.bot.timeouts.OpenAIText = 0
+	var deadline time.Time
+	var hasDeadline bool
+	tb.responses.fn = func(ctx context.Context, _ responses.ResponseNewParams) (*responses.Response, error) {
+		deadline, hasDeadline = ctx.Deadline()
+		return textResponse("ok"), nil
+	}
+	start := time.Now()
+	tb.bot.messageCreate(nil, mention("hello"))
+	if !hasDeadline {
+		t.Fatal("the request context has no deadline")
+	}
+	end := time.Now()
+	if deadline.Before(start.Add(5*time.Minute)) || deadline.After(end.Add(5*time.Minute)) {
+		t.Errorf("request deadline is %v after the start, want 5m", deadline.Sub(start))
+	}
+}
+
+func TestHungS3UploadTimesOut(t *testing.T) {
+	tb := newTestBot(t)
+	tb.bot.timeouts.Storage = 50 * time.Millisecond
+	tb.imgStore.onStore = func(ctx context.Context) { <-ctx.Done() }
+	tb.images.generate = func(context.Context, openai.ImageGenerateParams) (*openai.ImagesResponse, error) {
+		return imageResponse(base64.StdEncoding.EncodeToString(pngBytes)), nil
+	}
+	start := time.Now()
+	tb.bot.messageCreate(nil, mention("🎨 a cat"))
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("handler took %v despite a 50ms storage timeout", elapsed)
+	}
+	if sent := tb.discord.sentMessages(); len(sent) != 1 || !bytes.Equal(sent[0].File, pngBytes) {
+		t.Fatalf("expected the image in Discord, got %+v", sent)
+	}
+	if len(tb.imgStore.storedImages()) != 0 {
+		t.Error("the timed-out upload must not be recorded as stored")
+	}
+	for _, m := range tb.threads.addedMessages() {
+		if m.Source == "Bot" {
+			t.Errorf("no image URL should be recorded after a timed-out upload, got %+v", m)
+		}
+	}
+}
+
+func TestStalledSourceImageDownloadTimesOut(t *testing.T) {
+	tb := newTestBot(t)
+	tb.bot.timeouts.Storage = 50 * time.Millisecond
+	tb.imgStore.slowBody = true
+	m := mention("edit: add a hat")
+	m.Attachments = []*discordgo.MessageAttachment{{URL: "https://cdn.example/slow.png", Filename: "slow.png"}}
+
+	start := time.Now()
+	tb.bot.messageCreate(nil, m)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("handler took %v despite a 50ms storage timeout", elapsed)
+	}
+	if len(tb.images.edited) != 0 {
+		t.Error("no edit should be requested without the source image")
+	}
+	if sent := tb.discord.sentMessages(); len(sent) != 1 || !strings.Contains(sent[0].Content, "failed to read source image") {
+		t.Fatalf("expected a read failure notice, got %+v", sent)
+	}
+}

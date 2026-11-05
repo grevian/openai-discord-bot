@@ -286,11 +286,26 @@ type fakeImageStore struct {
 	// storeErr makes StoreImage fail before reading the body, like a request
 	// rejected up front (bad bucket, IAM, network).
 	storeErr error
-	stored   []storedImage
+	// onStore, when set, runs at the start of StoreImage (to block or panic).
+	onStore func(ctx context.Context)
+	stored  []storedImage
 	// sources maps URL -> image bytes for GetImageFromURL.
 	sources map[string][]byte
 	getErr  error
+	// slowBody makes GetImageFromURL return a body whose reads block until
+	// the request context ends, like a stalled download.
+	slowBody bool
 }
+
+// stalledBody is a response body whose Read blocks until ctx is done.
+type stalledBody struct{ ctx context.Context }
+
+func (b stalledBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (stalledBody) Close() error { return nil }
 
 func newFakeImageStore() *fakeImageStore {
 	return &fakeImageStore{sources: map[string][]byte{}}
@@ -299,9 +314,15 @@ func newFakeImageStore() *fakeImageStore {
 func (f *fakeImageStore) StoreImage(ctx context.Context, group string, r io.Reader, length int64) (string, error) {
 	f.log.record("s3.StoreImage", ctx)
 	f.mu.Lock()
-	err := f.storeErr
+	err, onStore := f.storeErr, f.onStore
 	f.mu.Unlock()
+	if onStore != nil {
+		onStore(ctx)
+	}
 	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	data, readErr := io.ReadAll(r)
@@ -320,6 +341,9 @@ func (f *fakeImageStore) GetImageFromURL(ctx context.Context, url string) (io.Re
 	defer f.mu.Unlock()
 	if f.getErr != nil {
 		return nil, 0, f.getErr
+	}
+	if f.slowBody {
+		return stalledBody{ctx}, -1, nil
 	}
 	data, ok := f.sources[url]
 	if !ok {
