@@ -80,12 +80,12 @@ func TestIsImageAttachment(t *testing.T) {
 
 func TestStripEditTriggers(t *testing.T) {
 	tests := map[string]string{
-		"✏️ add a hat":           "add a hat",
-		"edit: make it blue":     "make it blue",
-		"Edit: make it blue":     "make it blue",
-		"EDIT: make it blue":     "make it blue",
-		"redraw it as a cat":     "it as a cat",
-		"Redraw it as a cat":     "it as a cat",
+		"✏️ add a hat":          "add a hat",
+		"edit: make it blue":    "make it blue",
+		"Edit: make it blue":    "make it blue",
+		"EDIT: make it blue":    "make it blue",
+		"redraw it as a cat":    "it as a cat",
+		"Redraw it as a cat":    "it as a cat",
 		"  nothing to strip   ": "nothing to strip",
 	}
 	for in, want := range tests {
