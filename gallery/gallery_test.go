@@ -393,7 +393,7 @@ func TestLostRaceIsDetectedAndRetried(t *testing.T) {
 		}
 		injected = true
 		store.beforePut = nil // the interloper's own writes must not recurse
-		if err := other.addToManifest(context.Background(), Entry{ID: "id002", Key: "g2/id002", Created: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), Prompt: "interloper"}); err != nil {
+		if err := other.addToManifest(context.Background(), false, Entry{ID: "id002", Key: "g2/id002", Created: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), Prompt: "interloper"}); err != nil {
 			t.Errorf("interloper: %v", err)
 		}
 	}
@@ -422,7 +422,7 @@ func TestFirstWriteRacesAreDetected(t *testing.T) {
 		}
 		injected = true
 		store.beforePut = nil
-		if err := other.addToManifest(context.Background(), Entry{ID: "id009", Key: "g2/id009", Created: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)}); err != nil {
+		if err := other.addToManifest(context.Background(), false, Entry{ID: "id009", Key: "g2/id009", Created: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)}); err != nil {
 			t.Errorf("interloper: %v", err)
 		}
 	}
