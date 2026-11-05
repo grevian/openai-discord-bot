@@ -182,7 +182,7 @@ func TestEveryExternalCallHasADeadline(t *testing.T) {
 		},
 		"ready and shutdown": func(tb *testBot) {
 			tb.bot.ReadyHandler(nil, &discordgo.Ready{})
-			tb.bot.Shutdown()
+			tb.bot.Shutdown(context.Background())
 		},
 	}
 	for name, run := range flows {
@@ -375,6 +375,74 @@ func TestStalledSourceImageDownloadTimesOut(t *testing.T) {
 	}
 	if sent := tb.discord.sentMessages(); len(sent) != 1 || sent[0].Content != msgGeneric {
 		t.Fatalf("expected a read failure notice, got %+v", sent)
+	}
+}
+
+func TestReadyAnnouncesOncePerProcess(t *testing.T) {
+	tb := newTestBot(t)
+	tb.bot.ReadyHandler(nil, &discordgo.Ready{})
+	tb.bot.ReadyHandler(nil, &discordgo.Ready{}) // reconnect
+	if got := tb.discord.sentMessages(); len(got) != 1 {
+		t.Fatalf("want 1 startup message, got %+v", got)
+	}
+}
+
+func TestDrainWaitsForInflightAndRejectsNew(t *testing.T) {
+	tb := newTestBot(t)
+	if _, ok := tb.bot.beginRequest(); !ok {
+		t.Fatal("request rejected before drain")
+	}
+	drained := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		drained <- tb.bot.Drain(ctx)
+	}()
+	select {
+	case err := <-drained:
+		t.Fatalf("Drain returned with a handler in flight: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	// New messages are ignored while draining.
+	tb.bot.messageCreate(nil, &discordgo.MessageCreate{Message: &discordgo.Message{
+		Author: &discordgo.User{ID: "u"}, Mentions: []*discordgo.User{{ID: botID}}, ChannelID: "c", Content: "hi",
+	}})
+	if got := tb.discord.sentMessages(); len(got) != 0 {
+		t.Fatalf("message handled during drain: %+v", got)
+	}
+	tb.bot.inflight.Done()
+	if err := <-drained; err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+}
+
+func TestDrainTimesOut(t *testing.T) {
+	tb := newTestBot(t)
+	handlerCtx, _ := tb.bot.beginRequest() // never finishes on its own
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := tb.bot.Drain(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want deadline exceeded, got %v", err)
+	}
+	select {
+	case <-handlerCtx.Done():
+	default:
+		t.Fatal("leftover handler context was not cancelled")
+	}
+}
+
+func TestMessageCreateReleasesInflightSlot(t *testing.T) {
+	for _, panics := range []bool{false, true} {
+		tb := newTestBot(t)
+		if panics {
+			tb.discord.self = nil // handleMessage dereferences it and panics
+		}
+		tb.bot.messageCreate(nil, mention("hello"))
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := tb.bot.Drain(ctx); err != nil {
+			t.Errorf("panics=%v: Drain did not return promptly: %v", panics, err)
+		}
+		cancel()
 	}
 }
 

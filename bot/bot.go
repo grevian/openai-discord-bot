@@ -41,6 +41,20 @@ type AIBot struct {
 	storage             threadStore
 	imageStorage        imageStore
 	timeouts            timeouts
+
+	// readyOnce makes the startup notice go out once per process: discordgo
+	// fires Ready again after every reconnect.
+	readyOnce sync.Once
+
+	// lifeMu guards draining; inflight counts handlers admitted by
+	// beginRequest and not yet finished.
+	lifeMu   sync.Mutex
+	draining bool
+	inflight sync.WaitGroup
+	// handlerCtx is the base of every message handler's context; Drain
+	// cancels it when the wait times out. Created lazily by beginRequest.
+	handlerCtx    context.Context
+	handlerCancel context.CancelFunc
 }
 
 // promptFile is the on-disk format of prompts/danbo.json.
@@ -168,7 +182,13 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 // own deadline so a hung upstream cannot pin the handler goroutine forever.
 func (b *AIBot) messageCreate(_ *discordgo.Session, m *discordgo.MessageCreate) {
 	defer recoverHandler("messageCreate")
-	ctx, cancel := withTimeout(context.Background(), b.timeouts.Request)
+	base, ok := b.beginRequest()
+	if !ok {
+		slog.Default().WithGroup("messageCreate").Info("Shutting down; ignoring new message")
+		return
+	}
+	defer b.inflight.Done()
+	ctx, cancel := withTimeout(base, b.timeouts.Request)
 	defer cancel()
 	b.handleMessage(ctx, m)
 }
@@ -306,9 +326,55 @@ func (b *AIBot) reportError(ctx context.Context, span trace.Span, channel, userM
 func (b *AIBot) ReadyHandler(_ *discordgo.Session, _ *discordgo.Ready) {
 	defer recoverHandler("ReadyHandler")
 	slog.Default().WithGroup("ReadyHandler").Info("Connection state ready, Registering intents")
-	err := b.sendMessage(context.Background(), "1091532074495787049", "Gah! I'm awake! How long was I out?!")
-	if err != nil {
-		slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
+	// Ready fires again on every reconnect; only announce the first one.
+	b.readyOnce.Do(func() {
+		err := b.sendMessage(context.Background(), "1091532074495787049", "Gah! I'm awake! How long was I out?!")
+		if err != nil {
+			slog.Default().Error("Failed to notify operator of the ready event", slog.Any("error", err))
+		}
+	})
+}
+
+// beginRequest admits one handler and returns the context it should derive
+// from. It returns false once draining has begun; otherwise the caller must
+// call b.inflight.Done when finished.
+func (b *AIBot) beginRequest() (context.Context, bool) {
+	b.lifeMu.Lock()
+	defer b.lifeMu.Unlock()
+	if b.draining {
+		return nil, false
+	}
+	if b.handlerCtx == nil {
+		b.handlerCtx, b.handlerCancel = context.WithCancel(context.Background())
+	}
+	b.inflight.Add(1)
+	return b.handlerCtx, true
+}
+
+// Drain stops the bot accepting new messages and waits for in-flight handlers
+// to finish, or for ctx to expire, in which case the remaining handlers'
+// contexts are cancelled so they stop. It returns ctx's error if handlers
+// were still running.
+func (b *AIBot) Drain(ctx context.Context) error {
+	b.lifeMu.Lock()
+	b.draining = true
+	b.lifeMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		b.inflight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		b.lifeMu.Lock()
+		if b.handlerCancel != nil {
+			b.handlerCancel()
+		}
+		b.lifeMu.Unlock()
+		return ctx.Err()
 	}
 }
 
@@ -768,10 +834,10 @@ func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 	}
 }
 
-func (b *AIBot) Shutdown() {
-	// The bot context may already be cancelled during shutdown; the goodbye
-	// message still gets its own Discord deadline.
-	err := b.sendMessage(context.WithoutCancel(b.botCtx), "1091532074495787049", "Here I go, shutting down again!")
+// Shutdown tells the operator the bot is going away. ctx bounds the goodbye
+// message; the bot context is not used for it as it may already be cancelled.
+func (b *AIBot) Shutdown(ctx context.Context) {
+	err := b.sendMessage(ctx, "1091532074495787049", "Here I go, shutting down again!")
 	_, span := otel.GetTracerProvider().Tracer("AIBot").Start(b.botCtx, "Shutdown")
 	span.RecordError(err)
 	span.End()
