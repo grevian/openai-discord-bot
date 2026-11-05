@@ -20,6 +20,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -275,7 +276,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		N:      openai.Int(1),
 		User:   openai.String(m.Author.ID),
 		Size:   openai.ImageGenerateParamsSize1024x1024,
-		Model:  openai.ImageModelGPTImage2,
+		Model:  imageGenerateModel,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(imageRequest.Model)),
@@ -405,7 +406,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		N:      openai.Int(1),
 		User:   openai.String(m.Author.ID),
 		Size:   openai.ImageEditParamsSize1024x1024,
-		Model:  openai.ImageModelGPTImage1,
+		Model:  imageEditModel,
 	}
 	span.SetAttributes(
 		attribute.String("model", string(editRequest.Model)),
@@ -522,8 +523,9 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	addMsg("user", sanitizedUserPrompt)
 
 	request := responses.ResponseNewParams{
-		Model:        openai.ChatModelGPT4oMini,
+		Model:        chatModel,
 		Instructions: openai.String(b.systemInstructions),
+		Reasoning:    shared.ReasoningParam{Effort: chatReasoningEffort},
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: inputItems,
 		},

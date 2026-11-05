@@ -8,7 +8,7 @@ In most circumstances you can just `@Danbot` and recieve a response, if you incl
 
 ![conversational interactions](https://user-images.githubusercontent.com/603334/230736019-528a4a65-f787-4a16-918f-43c2f0203ddd.png)
 
-The bot also supports requests to `@Danbot draw me a picture of <something>` which will respond with a Dall-E generated picture as requested
+The bot also supports requests to `@Danbot draw me a picture of <something>` which will respond with an AI-generated picture as requested
 
 ![drawing interactions](https://user-images.githubusercontent.com/603334/230735886-4d869e36-919b-4f1c-8fab-3cfe5e6cf0cc.png)
 

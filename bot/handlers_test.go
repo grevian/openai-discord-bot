@@ -60,6 +60,13 @@ func TestChatCompletion(t *testing.T) {
 		t.Fatalf("expected one completion call, got %d", len(tb.responses.calls))
 	}
 	req := tb.responses.calls[0]
+	// Literal values on purpose: a model swap must update this test deliberately.
+	if req.Model != "gpt-6-luna" {
+		t.Errorf("model = %q, want gpt-6-luna", req.Model)
+	}
+	if req.Reasoning.Effort != "low" {
+		t.Errorf("reasoning effort = %q, want low", req.Reasoning.Effort)
+	}
 	if req.Instructions.Value != testSysInst {
 		t.Errorf("instructions = %q", req.Instructions.Value)
 	}
@@ -215,6 +222,9 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 		t.Fatalf("expected one Generate call, got %d", len(tb.images.generated))
 	}
 	req := tb.images.generated[0]
+	if req.Model != "gpt-image-2" {
+		t.Errorf("model = %q, want gpt-image-2", req.Model)
+	}
 	if !strings.HasPrefix(req.Prompt, testDrawing+" ") || !strings.HasSuffix(req.Prompt, " a cat") {
 		t.Errorf("prompt = %q", req.Prompt)
 	}
@@ -308,6 +318,9 @@ func TestEditUsesAttachment(t *testing.T) {
 		t.Fatalf("expected one Edit call, got %d", len(tb.images.edited))
 	}
 	req := tb.images.edited[0]
+	if req.Model != "gpt-image-2" {
+		t.Errorf("model = %q, want gpt-image-2", req.Model)
+	}
 	if req.Prompt != testDrawing+" add a hat" {
 		t.Errorf("prompt = %q", req.Prompt)
 	}
