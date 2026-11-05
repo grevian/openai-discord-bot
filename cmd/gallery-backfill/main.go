@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -202,9 +203,13 @@ func recoverPrompts(ctx context.Context, c *dynamodb.Client, table string, items
 	return out, nil
 }
 
-// parsePrompt undoes the "edit: <prompt> (source: <url>)" wrapping the bot
+var leadingMention = regexp.MustCompile(`^\s*<@!?\d+>\s*`)
+
+// parsePrompt strips a leading user mention (the bot's own, if it was left in)
+// and undoes the "edit: <prompt> (source: <url>)" wrapping the bot
 // applies to edit prompts.
 func parsePrompt(msg string) recovered {
+	msg = leadingMention.ReplaceAllString(msg, "")
 	if rest, ok := strings.CutPrefix(msg, "edit: "); ok {
 		if i := strings.LastIndex(rest, " (source: "); i >= 0 {
 			rest = rest[:i]

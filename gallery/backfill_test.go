@@ -69,3 +69,44 @@ func TestPublishBackfill(t *testing.T) {
 		t.Fatalf("duplicated: %+v", m.Items)
 	}
 }
+
+func TestPublishBackfillKeepsLiveEntries(t *testing.T) {
+	store := newMemStore()
+	g := New(Config{Enabled: true, MaxItems: 48}, store)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	key := "111/" + ksAt(base)
+	other := "111/" + ksAt(base.Add(time.Hour))
+	// The bot published this one live.
+	if err := g.Publish(context.Background(), Submission{GuildID: "111", ImageKey: key, Prompt: "live prompt"}); err != nil {
+		t.Fatal(err)
+	}
+	items := []BackfillItem{
+		{Submission: Submission{GuildID: "111", ImageKey: key, Prompt: ""}, Created: base},
+		{Submission: Submission{GuildID: "111", ImageKey: other, Prompt: "new"}, Created: base.Add(time.Hour)},
+		{Submission: Submission{GuildID: "111", ImageKey: "private-chat/" + ksAt(base)}, Created: base},
+	}
+	got, err := g.PublishBackfill(context.Background(), items)
+	if err != nil || len(got) != 1 || got[0].Key != other {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	m := store.manifest(t)
+	if len(m.Items) != 2 {
+		t.Fatalf("items = %+v", m.Items)
+	}
+	for _, e := range m.Items {
+		if e.Key == key && e.Prompt != "live prompt" {
+			t.Errorf("live entry overwritten: %+v", e)
+		}
+	}
+	// A sidecar that exists but is absent from the manifest is kept too.
+	store2 := newMemStore()
+	g2 := New(Config{Enabled: true}, store2)
+	id := key[len("111/"):]
+	_ = store2.Put(context.Background(), ItemPrefix+id+".json", []byte(`{"prompt":"orig"}`), PutOptions{})
+	if got, err := g2.PublishBackfill(context.Background(), items[:1]); err != nil || len(got) != 0 {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if b, _, _ := store2.Get(context.Background(), ItemPrefix+id+".json"); string(b) != `{"prompt":"orig"}` {
+		t.Errorf("sidecar overwritten: %s", b)
+	}
+}

@@ -16,3 +16,12 @@ func TestParsePrompt(t *testing.T) {
 		t.Errorf("gen = %+v", r)
 	}
 }
+
+func TestParsePromptStripsLeadingMention(t *testing.T) {
+	if r := parsePrompt("<@123> draw a cat"); r.prompt != "draw a cat" {
+		t.Errorf("got %q", r.prompt)
+	}
+	if r := parsePrompt("<@!123> edit: x (source: u)"); r.kind != gallery.KindEdit || r.prompt != "x" {
+		t.Errorf("got %+v", r)
+	}
+}

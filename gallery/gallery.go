@@ -194,7 +194,7 @@ func (g *Gallery) Publish(ctx context.Context, s Submission) error {
 	if err := g.store.Put(ctx, ItemPrefix+entry.ID+".json", sidecar, PutOptions{ContentType: "application/json"}); err != nil {
 		return fmt.Errorf("write sidecar: %w", err)
 	}
-	return g.addToManifest(ctx, entry)
+	return g.addToManifest(ctx, false, entry)
 }
 
 // BackfillItem is an already-stored image to publish after the fact. Unlike a
@@ -207,25 +207,43 @@ type BackfillItem struct {
 
 // PublishBackfill publishes many existing images with a single manifest
 // update, using the same sidecars, eligibility rules, prompt cleaning and
-// conditional-write logic as Publish. Items whose guild is not eligible are
-// skipped. It returns the entries that were published. Entries already in the
-// manifest are kept and merged by ID, so running it twice is harmless.
+// conditional-write logic as Publish. Items whose guild is not eligible, or
+// whose key is not under that guild's prefix (so never a private-chat/ key),
+// are skipped. Entries and sidecars that already exist win: a backfill never
+// overwrites something the bot published live. It returns the entries newly
+// added, and running it twice is harmless.
 func (g *Gallery) PublishBackfill(ctx context.Context, items []BackfillItem) ([]Entry, error) {
+	existing, _, err := g.loadManifest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	have := map[string]bool{}
+	for _, e := range existing.Items {
+		have[e.ID] = true
+	}
 	var entries []Entry
 	for _, it := range items {
-		if !g.cfg.Eligible(it.GuildID) {
+		if !g.cfg.Eligible(it.GuildID) || !strings.HasPrefix(it.ImageKey, it.GuildID+"/") {
 			continue
 		}
 		e, err := g.entryFor(it.Submission)
 		if err != nil {
 			return nil, err
 		}
+		if have[e.ID] {
+			continue
+		}
 		e.Created = it.Created.UTC().Truncate(time.Second)
 		sidecar, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal sidecar: %w", err)
 		}
-		if err := g.store.Put(ctx, ItemPrefix+e.ID+".json", sidecar, PutOptions{ContentType: "application/json"}); err != nil {
+		err = g.store.Put(ctx, ItemPrefix+e.ID+".json", sidecar, PutOptions{ContentType: "application/json", IfNoneMatch: true})
+		if errors.Is(err, ErrConflict) {
+			// A sidecar already exists (the bot published it live): keep it.
+			continue
+		}
+		if err != nil {
 			return nil, fmt.Errorf("write sidecar: %w", err)
 		}
 		entries = append(entries, e)
@@ -233,7 +251,7 @@ func (g *Gallery) PublishBackfill(ctx context.Context, items []BackfillItem) ([]
 	if len(entries) == 0 {
 		return nil, nil
 	}
-	return entries, g.addToManifest(ctx, entries...)
+	return entries, g.addToManifest(ctx, true, entries...)
 }
 
 // entryFor builds the public record for a submission.
@@ -272,7 +290,7 @@ func (g *Gallery) entryFor(s Submission) (Entry, error) {
 //     write, and we re-read, re-apply the entry to the fresh manifest and try
 //     again. Applying is idempotent (entries are merged by ID), so a retry can
 //     never duplicate an entry.
-func (g *Gallery) addToManifest(ctx context.Context, entries ...Entry) error {
+func (g *Gallery) addToManifest(ctx context.Context, keepExisting bool, entries ...Entry) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -294,6 +312,9 @@ func (g *Gallery) addToManifest(ctx context.Context, entries ...Entry) error {
 		}
 		next := current
 		for _, e := range entries {
+			if keepExisting && hasID(next, e.ID) {
+				continue
+			}
 			next = g.apply(next, e)
 		}
 		body, err := json.Marshal(next)
@@ -319,6 +340,15 @@ func (g *Gallery) addToManifest(ctx context.Context, entries ...Entry) error {
 			slog.Int("attempt", attempt+1))
 	}
 	return fmt.Errorf("write manifest: gave up after %d attempts: %w", maxUpdateAttempts, lastErr)
+}
+
+func hasID(m Manifest, id string) bool {
+	for _, e := range m.Items {
+		if e.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // loadManifest reads latest.json. A missing manifest is an empty one with an
