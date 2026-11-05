@@ -27,6 +27,17 @@ docker build -t openaibot . && docker run --rm -it openaibot \
  -e AI_DISCORD_BOT_CONVERSATIONS_NAME=<dynamodb_table_name>
 ```
 
+### Operator settings
+
+These optional variables set the values that are specific to the operator's deployment. Unset or empty means the default shown, which is what the deployed bot uses.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOT_OPERATOR_CHANNEL_ID` | `1091532074495787049` | Discord channel ID (17–20 digits) that receives the "awake" and "shutting down" notices. |
+| `BOT_IMAGE_BASE_URL` | `https://sillybullshit.click` | `https` origin that archived images are linked from. A trailing slash is removed. No query, fragment or credentials. |
+
+The bot refuses to start if either value is invalid.
+
 ## Deployment
 
 Infrastructure is managed by Terraform under [`terraform/`](terraform/). A single EC2 instance (Graviton, `t4g.nano` by default, Amazon Linux 2023) runs the bot in Docker, with an OpenTelemetry collector (`otelcol-contrib`) as a systemd service, in `ca-central-1`, fronted by CloudFront on `sillybullshit.click` for image fetches. State lives in an S3 backend (`openai-discord-bot-tfstate-537108148763`) with native locking.

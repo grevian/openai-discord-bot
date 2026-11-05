@@ -17,11 +17,15 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
+	"openai-discord-bot/bot"
 	"openai-discord-bot/bot/storage"
 	"openai-discord-bot/gallery"
 )
 
-var awscfg aws.Config
+var (
+	awscfg      aws.Config
+	botSettings bot.Settings
+)
 
 func init() {
 	viper.SetDefault("DEBUG_LOGS", false)
@@ -55,6 +59,11 @@ func Configure(serviceCtx context.Context) {
 	}
 	logger.DebugContext(serviceCtx, "Configuration Loaded", configFields...)
 
+	botSettings, err = loadBotSettings(viper.GetViper())
+	if err != nil {
+		panic(err)
+	}
+
 	if viper.GetBool("TRACING") {
 		logger.InfoContext(serviceCtx, "Configuring tracing")
 		tracingErr := configureTracing(serviceCtx)
@@ -76,6 +85,11 @@ func Configure(serviceCtx context.Context) {
 
 func GetAWSConfig() aws.Config {
 	return awscfg
+}
+
+// GetBotSettings returns the operator settings validated by Configure.
+func GetBotSettings() bot.Settings {
+	return botSettings
 }
 
 func GetStorage() *storage.Storage {
