@@ -54,8 +54,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # v1.7.0 is the newest release that builds with go 1.25 (v1.8+ needs 1.26); bump with go.mod
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   docker-build:
     name: docker-build
