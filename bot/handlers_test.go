@@ -105,7 +105,7 @@ func TestChatCompletionFailureNotifiesChannel(t *testing.T) {
 	}
 	tb.bot.handleMessage(context.Background(), mention("hello"))
 	got := tb.discord.sentMessages()
-	if len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if len(got) != 1 || got[0].Content != msgInvalidRequest {
 		t.Fatalf("unexpected messages %+v", got)
 	}
 	if len(tb.threads.addedMessages()) != 0 {
@@ -286,7 +286,7 @@ func TestDispatchRejectsInvalidBase64(t *testing.T) {
 	}
 	tb.bot.handleMessage(context.Background(), mention("🎨 a cat"))
 	got := tb.discord.sentMessages()
-	if len(got) != 1 || got[0].File != nil || !strings.Contains(got[0].Content, "invalid base64") {
+	if len(got) != 1 || got[0].File != nil || got[0].Content != msgGeneric {
 		t.Fatalf("expected an error message and no image, got %+v", got)
 	}
 }
@@ -336,7 +336,7 @@ func TestEditRejectsUnsupportedSource(t *testing.T) {
 	if len(tb.images.edited) != 0 {
 		t.Error("unsupported formats must not be sent to OpenAI")
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || !strings.Contains(got[0].Content, "not a supported format") {
+	if got := tb.discord.sentMessages(); len(got) != 1 || !strings.Contains(got[0].Content, "supported format") {
 		t.Errorf("unexpected messages %+v", got)
 	}
 }
@@ -350,7 +350,7 @@ func TestEditSourceFetchFailure(t *testing.T) {
 	if len(tb.images.edited) != 0 {
 		t.Error("no edit should be requested without a source image")
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || !strings.Contains(got[0].Content, "failed to fetch source image") {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Errorf("unexpected messages %+v", got)
 	}
 }

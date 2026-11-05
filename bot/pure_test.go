@@ -160,7 +160,9 @@ func TestFailureMessage(t *testing.T) {
 		{"moderation", &openai.Error{StatusCode: http.StatusBadRequest, Code: "moderation_blocked"}, msgInvalidRequest},
 		{"wrapped invalid", fmt.Errorf("w: %w", &openai.Error{StatusCode: http.StatusBadRequest}), msgInvalidRequest},
 		{"500", &openai.Error{StatusCode: http.StatusInternalServerError}, msgGeneric},
+		{"user error", fmt.Errorf("w: %w", newUserError("too big", errors.New("internal"))), "too big"},
 		{"401", &openai.Error{StatusCode: http.StatusUnauthorized}, msgGeneric},
+		{"user error", fmt.Errorf("w: %w", newUserError("too big", errors.New("internal"))), "too big"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -169,4 +171,44 @@ func TestFailureMessage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadPromptFile(t *testing.T) {
+	t.Run("repository prompt parses", func(t *testing.T) {
+		pf, err := loadPromptFile("../prompts/danbo.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pf.Instructions == "" {
+			t.Error("expected non-empty instructions")
+		}
+	})
+	t.Run("missing file", func(t *testing.T) {
+		if _, err := loadPromptFile(filepath.Join(t.TempDir(), "nope.json")); err == nil {
+			t.Error("expected an error")
+		}
+	})
+	t.Run("bad json", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "bad.json")
+		if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadPromptFile(path); err == nil {
+			t.Error("expected an error")
+		}
+	})
+	t.Run("fields", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "p.json")
+		body := `{"instructions":"i","drawing_instructions":"d","examples":[{"role":"user","content":"c"}]}`
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		pf, err := loadPromptFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pf.Instructions != "i" || pf.DrawingInstructions != "d" || len(pf.Examples) != 1 || pf.Examples[0].Content != "c" {
+			t.Errorf("unexpected prompt file %+v", pf)
+		}
+	})
 }

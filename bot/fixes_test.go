@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -68,7 +67,7 @@ func TestDispatchDoesNotLeakUploadWhenDiscordFails(t *testing.T) {
 		t.Fatalf("expected the S3 upload to complete with the full image, got %+v", stored)
 	}
 	sent := tb.discord.sentMessages()
-	if len(sent) != 1 || !strings.Contains(sent[0].Content, "failed to send embedded image to discord") {
+	if len(sent) != 1 || sent[0].Content != msgGeneric {
 		t.Fatalf("expected the failure to be reported, got %+v", sent)
 	}
 }
@@ -108,7 +107,7 @@ func TestEmptyImageResponsesAreErrors(t *testing.T) {
 func assertNoImageError(t *testing.T, tb *testBot) {
 	t.Helper()
 	sent := tb.discord.sentMessages()
-	if len(sent) != 1 || sent[0].File != nil || !strings.Contains(sent[0].Content, "no image") {
+	if len(sent) != 1 || sent[0].File != nil || sent[0].Content != msgGeneric {
 		t.Fatalf("expected a 'no image' error and no attachment, got %+v", sent)
 	}
 	if len(tb.imgStore.storedImages()) != 0 {
@@ -211,7 +210,7 @@ func TestHungOpenAICallTimesOut(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("handler took %v despite a 50ms timeout", elapsed)
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Fatalf("expected the user to be told it failed, got %+v", got)
 	}
 }
@@ -226,7 +225,7 @@ func TestErrorIsReportedAfterRequestDeadline(t *testing.T) {
 		return nil, ctx.Err()
 	}
 	tb.bot.messageCreate(nil, mention("hello"))
-	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Fatalf("expected an error notice, got %+v", got)
 	}
 }
@@ -257,7 +256,7 @@ func TestEmptyCompletionIsNotRetried(t *testing.T) {
 	if n := tb.responses.callCount(); n != 1 {
 		t.Errorf("expected exactly one call, got %d", n)
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Errorf("unexpected messages %+v", got)
 	}
 }
@@ -286,7 +285,7 @@ func TestCompletionRetriesOnlyInTheSDK(t *testing.T) {
 	if n := attempts.Load(); n != 3 {
 		t.Errorf("expected 3 HTTP attempts (1 + 2 SDK retries), got %d", n)
 	}
-	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != "Whoops something went wrong processing that" {
+	if got := tb.discord.sentMessages(); len(got) != 1 || got[0].Content != msgGeneric {
 		t.Errorf("unexpected messages %+v", got)
 	}
 }

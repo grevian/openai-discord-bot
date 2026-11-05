@@ -11,8 +11,8 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"os"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -233,9 +233,27 @@ const (
 	msgGeneric        = "Whoops, something went wrong processing that. Please try again."
 )
 
+// userError is an error whose message is safe and useful to show to the user.
+// Wrap with newUserError; detect with errors.As.
+type userError struct {
+	msg string
+	err error
+}
+
+func (e *userError) Error() string       { return e.err.Error() }
+func (e *userError) Unwrap() error       { return e.err }
+func (e *userError) UserMessage() string { return e.msg }
+
+// newUserError returns err annotated with a message to show the user.
+func newUserError(msg string, err error) error { return &userError{msg: msg, err: err} }
+
 // failureMessage is the text posted to the channel when handling a message
 // failed with err. It never includes the error's own text.
 func failureMessage(err error) string {
+	var ue *userError
+	if errors.As(err, &ue) {
+		return ue.UserMessage()
+	}
 	var apiErr *openai.Error
 	if errors.As(err, &apiErr) {
 		switch {
@@ -432,7 +450,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		slog.Int("bytes", len(srcBytes)),
 		slog.String("content_type", srcContentType))
 	if srcContentType == "" {
-		return fmt.Errorf("source image is not a supported format (png/jpeg/webp)")
+		return newUserError("That image isn't a supported format. Please use png, jpeg or webp.", fmt.Errorf("source image is not a supported format (png/jpeg/webp)"))
 	}
 
 	fullPrompt := prompt
