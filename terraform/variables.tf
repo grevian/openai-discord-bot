@@ -7,5 +7,5 @@ variable "instance_type" {
 variable "otel_collector_version" {
   description = "Version of opentelemetry-collector-contrib to install on the instance."
   type        = string
-  default     = "0.119.0"
+  default     = "0.164.0"
 }
