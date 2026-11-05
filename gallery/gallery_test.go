@@ -499,7 +499,11 @@ func TestCleanPrompt(t *testing.T) {
 		{"user mention", "draw <@123456789> and <@!987654321>", "draw someone and someone"},
 		{"role and channel mentions", "<@&5555> in <#6666>", "someone in someone"},
 		{"broadcast mentions", "hey @everyone and @here and @Everyone", "hey everyone and here and Everyone"},
-		{"only the broadcast words", "me@here.example and @hereford", "me@here.example and @hereford"},
+		{"doubled @", "@@here and x@@everyone", "here and xeveryone"},
+		{"adjacent broadcasts", "@here@everyone", "hereeveryone"},
+		{"after a mention", "<@123>@here", "someonehere"},
+		{"after a non-ASCII letter", "café@here", "caféhere"},
+		{"only the broadcast words", "@hereford and @everyones and @her", "@hereford and @everyones and @her"},
 		{"empty", "   ", ""},
 		{"html is left alone for the renderer", "<script>alert(1)</script>", "<script>alert(1)</script>"},
 	}
