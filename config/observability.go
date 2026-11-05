@@ -13,7 +13,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	otellog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/trace"
@@ -81,7 +80,7 @@ func configureLogging(serviceCtx context.Context) error {
 			otellog.WithProcessor(otellog.NewBatchProcessor(exp)),
 			otellog.WithResource(ec2Resource),
 		)
-		global.SetLoggerProvider(provider)
+		otel.SetLoggerProvider(provider)
 
 		logger = otelslog.NewLogger("openai-discord-bot")
 
