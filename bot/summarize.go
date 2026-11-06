@@ -171,6 +171,9 @@ func (b *AIBot) handleSummarizeMessage(ctx context.Context, responseChannel, raw
 		}
 	}
 
+	// The reply is the last step: stop the typing indicator first so it
+	// cannot be refreshed while the reply is being posted.
+	stopTypingFromContext(ctx)
 	// The summary echoes untrusted text, so it may not ping anyone.
 	opt, cancel := b.discordCtx(ctx)
 	_, err = b.discord.ChannelMessageSendComplex(responseChannel, &discordgo.MessageSend{

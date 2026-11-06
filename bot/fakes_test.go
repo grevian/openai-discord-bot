@@ -115,6 +115,8 @@ type fakeDiscord struct {
 	threadErr      error
 	// onSend, when set, runs at the start of ChannelMessageSend.
 	onSend func()
+	// onSendComplex, when set, runs at the start of ChannelMessageSendComplex.
+	onSendComplex func()
 
 	sent           []sentMessage
 	typing         []string
@@ -191,7 +193,11 @@ func (f *fakeDiscord) ChannelMessageSendComplex(id string, data *discordgo.Messa
 	f.log.record("discord.ChannelMessageSendComplex", discordCtx(opts))
 	f.mu.Lock()
 	err := f.sendComplexErr
+	onSendComplex := f.onSendComplex
 	f.mu.Unlock()
+	if onSendComplex != nil {
+		onSendComplex()
+	}
 	if err != nil {
 		return nil, err
 	}
