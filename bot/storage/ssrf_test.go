@@ -134,8 +134,28 @@ func TestGetImageFromURLRefusesRedirectToOtherScheme(t *testing.T) {
 	defer srv.Close()
 	s := &ImageStorage{httpClient: newGuardedClient(func(netip.Addr) bool { return false })}
 	_, _, err := s.GetImageFromURL(context.Background(), srv.URL)
-	if err == nil {
-		t.Fatal("expected the redirect to a file: URL to fail")
+	if !errors.Is(err, ErrBlockedScheme) {
+		t.Fatalf("err = %v, want ErrBlockedScheme from the redirect check", err)
+	}
+}
+
+// A proxy would be the address dialled, so the guard would check the proxy
+// instead of the real destination: the transport must ignore proxy settings.
+func TestGuardedTransportIgnoresProxyEnv(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:3128")
+	if tr := newGuardedTransport(isBlockedAddr); tr.Proxy != nil {
+		t.Error("guarded transport has a Proxy func; it must be nil")
+	}
+}
+
+// netip.Prefix.Contains is false for any address with a zone, so a zoned
+// address would pass the prefix list; the zone check is what blocks it.
+func TestIsBlockedAddrRefusesZonedAddresses(t *testing.T) {
+	for _, s := range []string{"fe80::1%eth0", "2606:4700::6810:84e5%eth0"} {
+		if !isBlockedAddr(netip.MustParseAddr(s)) {
+			t.Errorf("%s should be blocked", s)
+		}
 	}
 }
 
