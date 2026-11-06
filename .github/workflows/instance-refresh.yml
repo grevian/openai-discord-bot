@@ -1,0 +1,93 @@
+name: Instance Refresh
+
+# Replaces the bot's EC2 instance so it boots from the latest launch template
+# (user-data: start-bot.sh, secrets, docker run flags). The ASG uses version
+# "$Latest", so Terraform never sees a change to trigger its own refresh.
+on:
+  workflow_dispatch:
+  # Called by terraform.yml when an apply changed the launch template
+  workflow_call:
+
+env:
+  AWS_REGION: ca-central-1
+  ASG_NAME: openai-discord-bot-prod
+  # Fail the job if the refresh has not finished by then (seconds)
+  REFRESH_TIMEOUT: "1200"
+
+jobs:
+  refresh:
+    name: refresh
+    environment: production
+    runs-on: ubuntu-24.04-arm
+    # Same group as deploy.yml and terraform.yml: no deploy restarts the bot
+    # while the instance is being replaced.
+    concurrency: production
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-duration-seconds: 1800
+
+      - name: Refuse if a refresh is already running
+        run: |
+          ACTIVE=$(aws autoscaling describe-instance-refreshes \
+            --auto-scaling-group-name "$ASG_NAME" \
+            --query "InstanceRefreshes[?Status=='Pending' || Status=='InProgress' || Status=='Cancelling'].InstanceRefreshId" \
+            --output text)
+          if [ -n "$ACTIVE" ]; then
+            echo "::error::An instance refresh is already running ($ACTIVE); not starting another"
+            exit 1
+          fi
+
+      # One instance (min = max = 1), so there is no healthy capacity to keep:
+      # MinHealthyPercentage=0 terminates the old instance, then launches the
+      # new one. The bot is offline until the new instance boots and
+      # start-bot.sh runs (a few minutes).
+      # Two bots on one Discord token would fight over the session, so the
+      # overlapping variant (min 100, max 200) is deliberately not used.
+      - name: Start instance refresh
+        id: start
+        run: |
+          REFRESH_ID=$(aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name "$ASG_NAME" \
+            --strategy Rolling \
+            --preferences '{"MinHealthyPercentage":0,"InstanceWarmup":60}' \
+            --query InstanceRefreshId --output text)
+          echo "Started instance refresh $REFRESH_ID"
+          echo "refresh_id=$REFRESH_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the refresh to finish
+        env:
+          REFRESH_ID: ${{ steps.start.outputs.refresh_id }}
+        run: |
+          DEADLINE=$((SECONDS + REFRESH_TIMEOUT))
+          while true; do
+            read -r STATUS REASON < <(aws autoscaling describe-instance-refreshes \
+              --auto-scaling-group-name "$ASG_NAME" \
+              --instance-refresh-ids "$REFRESH_ID" \
+              --query "InstanceRefreshes[0].[Status, StatusReason || '-']" \
+              --output text)
+            echo "Status: $STATUS"
+            case "$STATUS" in
+              Successful)
+                echo "Instance refresh $REFRESH_ID succeeded"
+                exit 0 ;;
+              Pending|InProgress) ;;
+              *)
+                # Failed, Cancelling, Cancelled, RollbackInProgress, ...
+                echo "::error::Instance refresh $REFRESH_ID ended as $STATUS: $REASON"
+                exit 1 ;;
+            esac
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              echo "::error::Instance refresh $REFRESH_ID still $STATUS after ${REFRESH_TIMEOUT}s; it keeps running in AWS"
+              exit 1
+            fi
+            sleep 20
+          done
