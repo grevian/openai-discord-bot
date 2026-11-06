@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"openai-discord-bot/bot/storage"
@@ -24,16 +25,24 @@ type timeouts struct {
 	Discord time.Duration
 	// Gallery bounds one gallery publish (a handful of small S3 writes).
 	Gallery time.Duration
+	// LinkExtract bounds one page extraction (a Kagi Extract call). It must
+	// be longer than kagiPageTimeout, the time Kagi is asked to take.
+	LinkExtract time.Duration
+	// TypingRefresh is how often the "typing" indicator is re-sent while a
+	// request is being handled. Discord shows one for about 10 seconds.
+	TypingRefresh time.Duration
 }
 
 func defaultTimeouts() timeouts {
 	return timeouts{
-		Request:     5 * time.Minute,
-		OpenAIText:  90 * time.Second,
-		OpenAIImage: 3 * time.Minute,
-		Storage:     30 * time.Second,
-		Discord:     30 * time.Second,
-		Gallery:     20 * time.Second,
+		Request:       5 * time.Minute,
+		OpenAIText:    90 * time.Second,
+		OpenAIImage:   3 * time.Minute,
+		Storage:       30 * time.Second,
+		Discord:       30 * time.Second,
+		Gallery:       20 * time.Second,
+		LinkExtract:   25 * time.Second,
+		TypingRefresh: 8 * time.Second,
 	}
 }
 
@@ -74,4 +83,53 @@ func (b *AIBot) getThread(ctx context.Context, thread string) ([]storage.Convers
 	callCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
 	defer cancel()
 	return b.storage.GetThread(callCtx, thread)
+}
+
+type typingStopKey struct{}
+
+// keepTyping shows the "typing" indicator in channel until the returned stop
+// function is called (or ctx ends). It sends one immediately and then
+// re-sends every timeouts.TypingRefresh. stop is idempotent and waits for the
+// goroutine to exit, so no typing call is made after it returns. The returned
+// context carries stop for stopTypingFromContext.
+func (b *AIBot) keepTyping(ctx context.Context, channel string) (context.Context, func()) {
+	typingCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer recoverHandler("keepTyping")
+		interval := b.timeouts.TypingRefresh
+		if interval <= 0 {
+			interval = defaultTimeouts().TypingRefresh
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			opt, cancelCall := b.discordCtx(typingCtx)
+			_ = b.discord.ChannelTyping(channel, opt)
+			cancelCall()
+			select {
+			case <-typingCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
+	return context.WithValue(ctx, typingStopKey{}, stop), stop
+}
+
+// stopTypingFromContext stops the indicator started by keepTyping, if ctx
+// came from it. It lets code deep in a handler stop it right after the final
+// send.
+func stopTypingFromContext(ctx context.Context) {
+	if stop, ok := ctx.Value(typingStopKey{}).(func()); ok {
+		stop()
+	}
 }

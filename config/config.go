@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -52,7 +53,7 @@ func Configure(serviceCtx context.Context) {
 	configValues := viper.AllSettings()
 	configFields := make([]any, 0, len(configValues))
 	for k, v := range configValues {
-		if k == "DISCORD_TOKEN" || k == "OPENAI_AUTH_TOKEN" {
+		if isSecretSetting(k) {
 			v = "<REDACTED>"
 		}
 		configFields = append(configFields, slog.Any(k, v))
@@ -81,6 +82,16 @@ func Configure(serviceCtx context.Context) {
 		panic(fmt.Sprintf("unable to load SDK config, %v", err))
 	}
 	awstrace.AppendMiddlewares(&awscfg.APIOptions)
+}
+
+// isSecretSetting reports whether the viper key k holds a secret that must
+// not be logged. viper lowercases keys, so compare without case.
+func isSecretSetting(k string) bool {
+	switch strings.ToUpper(k) {
+	case "DISCORD_TOKEN", "OPENAI_AUTH_TOKEN", "KAGI_API_KEY":
+		return true
+	}
+	return false
 }
 
 func GetAWSConfig() aws.Config {

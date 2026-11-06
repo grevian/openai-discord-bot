@@ -31,6 +31,17 @@ resource "aws_ssm_parameter" "honeycomb_api_key" {
   }
 }
 
+resource "aws_ssm_parameter" "kagi_api_key" {
+  name        = "/${local.service}/${local.environment}/kagi_api_key"
+  description = "Kagi API key for link summaries. Set by deploy.yml from the KAGI_API_KEY GitHub secret; the placeholder means unset."
+  type        = "SecureString"
+  value       = "populated-out-of-band"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 resource "aws_ssm_parameter" "image_tag" {
   name        = "/${local.service}/${local.environment}/image_tag"
   description = "Container image tag the bot instance pulls. Updated by GHA on each deploy."

@@ -97,6 +97,8 @@ type sentMessage struct {
 	Reference *discordgo.MessageReference
 	FileName  string
 	File      []byte
+	// AllowedMentions is what a complex send allowed to ping.
+	AllowedMentions *discordgo.MessageAllowedMentions
 }
 
 // fakeDiscord is an in-memory discordAPI. Every field is guarded by mu.
@@ -113,6 +115,8 @@ type fakeDiscord struct {
 	threadErr      error
 	// onSend, when set, runs at the start of ChannelMessageSend.
 	onSend func()
+	// onSendComplex, when set, runs at the start of ChannelMessageSendComplex.
+	onSendComplex func()
 
 	sent           []sentMessage
 	typing         []string
@@ -189,14 +193,18 @@ func (f *fakeDiscord) ChannelMessageSendComplex(id string, data *discordgo.Messa
 	f.log.record("discord.ChannelMessageSendComplex", discordCtx(opts))
 	f.mu.Lock()
 	err := f.sendComplexErr
+	onSendComplex := f.onSendComplex
 	f.mu.Unlock()
+	if onSendComplex != nil {
+		onSendComplex()
+	}
 	if err != nil {
 		return nil, err
 	}
 	if ctx := discordCtx(opts); ctx != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	msg := sentMessage{Channel: id, Content: data.Content, Reference: data.Reference}
+	msg := sentMessage{Channel: id, Content: data.Content, Reference: data.Reference, AllowedMentions: data.AllowedMentions}
 	if data.File != nil {
 		body, readErr := io.ReadAll(data.File.Reader)
 		if readErr != nil {

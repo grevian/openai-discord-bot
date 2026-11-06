@@ -30,6 +30,7 @@ func helpText(imageBaseURL string) string {
 **Thread:** add 🧵 to start a thread, where I remember what we said (you still have to @ me every time).
 **Draw:** `+"`@Danbot 🎨 <idea>`"+` or `+"`@Danbot draw me a picture of <idea>`"+`. Stick figures, wax crayon, 1024x1024. The arms are supposed to be like that.
 **Edit:** attach an image (or reply to one of my drawings) and say `+"`✏️ <change>`, `edit: <change>` or `redraw <change>`"+`. png, jpeg or webp, under 50MB. The result is 1024x1024.
+**Summarise a link:** `+"`@Danbot <https link>`"+` on its own, `+"`📰 <link>` or `summarize <link>`"+`. One paragraph, from the first 12,000 characters of the page. https only.
 
 More, with the sad details: %s%s`, strings.TrimRight(imageBaseURL, "/"), helpPath)
 }
