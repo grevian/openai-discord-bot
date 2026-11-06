@@ -78,8 +78,8 @@ func TestTypingStopsBeforeErrorNotice(t *testing.T) {
 	atNotice := -1
 	tb.discord.mu.Lock()
 	tb.discord.onSend = func() {
-		time.Sleep(30 * time.Millisecond) // typing would refresh if still running
 		atNotice = tb.discord.typingCount()
+		time.Sleep(30 * time.Millisecond) // typing would refresh if still running
 	}
 	tb.discord.mu.Unlock()
 	tb.bot.handleMessage(context.Background(), mention("draw me a picture of a cat"))
@@ -123,4 +123,63 @@ func TestStopTypingIsIdempotent(t *testing.T) {
 	stopTypingFromContext(ctx)
 	stopTypingFromContext(context.Background()) // no-op without a keepalive
 	assertTypingStopped(t, tb.discord)
+}
+
+func TestTypingStopsBeforeChatReply(t *testing.T) {
+	tb := fastTypingBot(t)
+	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+		waitForTyping(t, tb.discord, 2)
+		return textResponse("hi"), nil
+	}
+	var atSend, afterSleep int
+	tb.discord.mu.Lock()
+	tb.discord.onSend = func() {
+		atSend = tb.discord.typingCount()
+		time.Sleep(30 * time.Millisecond) // a slow POST
+		afterSleep = tb.discord.typingCount()
+	}
+	tb.discord.mu.Unlock()
+	tb.bot.handleMessage(context.Background(), mention("hello"))
+	if len(tb.discord.sentMessages()) != 1 {
+		t.Fatalf("expected a reply, got %+v", tb.discord.sentMessages())
+	}
+	if atSend != afterSleep {
+		t.Fatalf("typing sent while the reply was being posted: %d -> %d", atSend, afterSleep)
+	}
+}
+
+// Typing must still be on during the Discord upload, and off while the S3
+// archive is still running afterwards.
+func TestImageTypingCoversUploadAndStopsBeforeArchiveWait(t *testing.T) {
+	tb := fastTypingBot(t)
+	b64 := base64.StdEncoding.EncodeToString(pngBytes)
+	tb.images.generate = func(context.Context, openai.ImageGenerateParams) (*openai.ImagesResponse, error) {
+		return imageResponse(b64), nil
+	}
+	var uploadStart, uploadEnd int
+	tb.discord.mu.Lock()
+	tb.discord.onSendComplex = func() {
+		uploadStart = tb.discord.typingCount()
+		time.Sleep(40 * time.Millisecond) // a slow upload
+		uploadEnd = tb.discord.typingCount()
+	}
+	tb.discord.mu.Unlock()
+	var archiveStart, archiveEnd int
+	tb.imgStore.mu.Lock()
+	tb.imgStore.onStore = func(context.Context) {
+		time.Sleep(100 * time.Millisecond) // let the upload finish and typing stop
+		archiveStart = tb.discord.typingCount()
+		time.Sleep(40 * time.Millisecond) // a slow S3 upload
+		archiveEnd = tb.discord.typingCount()
+	}
+	tb.imgStore.mu.Unlock()
+
+	tb.bot.handleMessage(context.Background(), mention("draw me a picture of a cat"))
+
+	if uploadEnd <= uploadStart {
+		t.Errorf("typing was not refreshed during the upload: %d -> %d", uploadStart, uploadEnd)
+	}
+	if archiveEnd != archiveStart {
+		t.Errorf("typing still on during the S3 archive: %d -> %d", archiveStart, archiveEnd)
+	}
 }

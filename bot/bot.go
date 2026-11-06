@@ -837,6 +837,9 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", warnErr))
 	}
 
+	// The reply is the last step: stop the typing indicator first so it
+	// cannot be refreshed while the reply is being posted.
+	stopTypingFromContext(ctx)
 	err = b.sendMessage(ctx, responseChannel, responseText)
 	if err != nil {
 		return fmt.Errorf("failed to respond to discord channel: %w", err)
