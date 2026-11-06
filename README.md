@@ -4,7 +4,7 @@ This is a silly discord to openai bot designed to amuse myself and my friends
 
 ## Interacting with the bot
 
-Every request starts with an `@Danbot` mention. Say `@Danbot help` on its own for this list in the bot's voice, or see the [help page](https://sillybullshit.click/gallery/help.html).
+Every request starts with an `@Danbot` mention. Say `@Danbot help` on its own for this list in the bot's voice, or see the [help page](https://sillybullshit.click/help/).
 
 | You write | What happens |
 | --- | --- |

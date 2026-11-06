@@ -53,6 +53,7 @@ func TestPublishSiteUploadsPageWithTypes(t *testing.T) {
 		"gallery/gallery.js":  "text/javascript; charset=utf-8",
 		"gallery/gallery.css": "text/css; charset=utf-8",
 		"gallery/help.html":   "text/html; charset=utf-8",
+		"help/index.html":     "text/html; charset=utf-8",
 	}
 	for key, ct := range want {
 		o, ok := store.objects[key]

@@ -19,7 +19,7 @@ func TestHelpReplyIsStaticAndLinksHelpPage(t *testing.T) {
 	if len(sent) != 1 || sent[0].Content != helpText(testImageBaseURL) {
 		t.Fatalf("unexpected Discord messages %+v", sent)
 	}
-	if !strings.Contains(sent[0].Content, testImageBaseURL+"/gallery/help.html") {
+	if !strings.Contains(sent[0].Content, testImageBaseURL+"/help/") {
 		t.Errorf("help reply does not link the help page: %q", sent[0].Content)
 	}
 	if len(sent[0].Content) > 2000 {
