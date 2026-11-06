@@ -56,6 +56,20 @@ func TestEditWithoutImageSaysSo(t *testing.T) {
 // help page. Add new triggers here (see AGENTS.md).
 func TestDocsMentionEveryTrigger(t *testing.T) {
 	needles := []string{"🧵", "🎨", "draw me a picture of", "✏️", "edit:", "redraw", "png", "jpeg", "webp", "50MB", "1024x1024", "help"}
+	// The code must still recognise the triggers the docs promise.
+	for _, c := range []struct {
+		msg  string
+		src  bool
+		want messageIntent
+	}{
+		{"🎨 x", false, intentDraw}, {"draw me a picture of x", false, intentDraw},
+		{"✏️ x", true, intentEdit}, {"edit: x", true, intentEdit}, {"redraw x", true, intentEdit},
+		{"edit: x", false, intentEditNoImage}, {"help", false, intentHelp},
+	} {
+		if got, _ := classifyMessage(c.msg, botID, c.src); got != c.want {
+			t.Errorf("classifyMessage(%q, image=%v) = %v, want %v", c.msg, c.src, got, c.want)
+		}
+	}
 	readme, err := os.ReadFile("../README.md")
 	if err != nil {
 		t.Fatal(err)

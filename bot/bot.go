@@ -181,6 +181,9 @@ const maxEditSourceBytes = 50_000_000
 var errSourceImageTooLarge = newUserError("That image is too large for me to edit (the limit is 50MB). Big files scare me too. Please send a smaller one.",
 	errors.New("source image too large"))
 
+// editAtStart matches a message that opens with an edit trigger.
+var editAtStart = regexp.MustCompile(`^(✏️|edit:|redraw\b)`)
+
 // classifyMessage decides what a message is asking for and returns the prompt
 // to send for it. botID is stripped from the prompt; hasSourceImage reports
 // whether an image to edit is available.
@@ -195,10 +198,14 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 	wantsEdit := hasSourceImage && editTrigger
 	wantsDraw := strings.Contains(lowerPrompt, "🎨") || strings.Contains(lowerPrompt, "draw me a picture of")
 
+	// Without an image the match is anchored to the start of the message, so
+	// ordinary chat ("credit: ...", "can you redraw my thinking") still chats.
+	wantsEditNoImage := !hasSourceImage && editAtStart.MatchString(strings.TrimSpace(lowerPrompt))
+
 	switch {
 	case isHelpRequest(sanitizedUserPrompt):
 		return intentHelp, sanitizedUserPrompt
-	case editTrigger && !hasSourceImage && !wantsDraw:
+	case wantsEditNoImage && !wantsDraw:
 		return intentEditNoImage, sanitizedUserPrompt
 	case wantsEdit:
 		return intentEdit, stripEditTriggers(sanitizedUserPrompt)

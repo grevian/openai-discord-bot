@@ -16,7 +16,7 @@ Every request starts with an `@Danbot` mention. Say `@Danbot help` on its own fo
 
 Notes:
 
-- Triggers are case-insensitive substring matches. Edit beats draw, which beats chat.
+- Draw triggers match anywhere in the message, case-insensitively; edit triggers (with an image) likewise. With an image, edit beats draw, which beats chat. Without one, a message that starts with an edit trigger gets the "need an image" reply (unless it also draws).
 - The image to edit must be png, jpeg or webp and under 50MB. Without an image, an edit request gets a short reply saying one is needed.
 - Generated images are archived and, when the gallery is enabled, shown in the [gallery](https://sillybullshit.click/gallery/) (newest 48).
 - Slash commands are not supported yet.
