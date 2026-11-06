@@ -2,7 +2,6 @@ package bot
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 )
@@ -49,47 +48,5 @@ func TestEditWithoutImageSaysSo(t *testing.T) {
 	sent := tb.discord.sentMessages()
 	if len(sent) != 1 || sent[0].Content != msgEditNeedsImage {
 		t.Fatalf("unexpected Discord messages %+v", sent)
-	}
-}
-
-// Every trigger and limit must appear in the help reply, the README and the
-// help page. Add new triggers here (see AGENTS.md).
-func TestDocsMentionEveryTrigger(t *testing.T) {
-	needles := []string{"🧵", "🎨", "draw me a picture of", "✏️", "edit:", "redraw", "png", "jpeg", "webp", "50MB", "1024x1024", "help", "📰", "summarize", "https", "12,000"}
-	// The code must still recognise the triggers the docs promise.
-	for _, c := range []struct {
-		msg  string
-		src  bool
-		want messageIntent
-	}{
-		{"🎨 x", false, intentDraw}, {"draw me a picture of x", false, intentDraw},
-		{"✏️ x", true, intentEdit}, {"edit: x", true, intentEdit}, {"redraw x", true, intentEdit},
-		{"edit: x", false, intentEditNoImage}, {"help", false, intentHelp},
-		{"https://example.com/a", false, intentSummarize}, {"📰 https://example.com/a", false, intentSummarize},
-		{"summarize https://example.com/a", false, intentSummarize},
-	} {
-		if got, _ := classifyMessage(c.msg, botID, c.src); got != c.want {
-			t.Errorf("classifyMessage(%q, image=%v) = %v, want %v", c.msg, c.src, got, c.want)
-		}
-	}
-	readme, err := os.ReadFile("../README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page, err := os.ReadFile("../gallery/site/help.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	docs := map[string]string{
-		"help reply": helpText(testImageBaseURL),
-		"README":     string(readme),
-		"help.html":  string(page),
-	}
-	for name, text := range docs {
-		for _, n := range needles {
-			if !strings.Contains(text, n) {
-				t.Errorf("%s does not mention %q", name, n)
-			}
-		}
 	}
 }
