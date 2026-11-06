@@ -165,6 +165,8 @@ const (
 	intentChat messageIntent = iota
 	intentDraw
 	intentEdit
+	intentEditNoImage // edit trigger without an image to edit
+	intentHelp
 )
 
 // maxEditSourceBytes is the size at which a source image is refused for an
@@ -187,12 +189,17 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 	sanitizedUserPrompt := strings.ReplaceAll(content, fmt.Sprintf("<@%s>", botID), "")
 	lowerPrompt := strings.ToLower(sanitizedUserPrompt)
 
-	wantsEdit := hasSourceImage && (strings.Contains(sanitizedUserPrompt, "✏️") ||
+	editTrigger := strings.Contains(sanitizedUserPrompt, "✏️") ||
 		strings.Contains(lowerPrompt, "edit:") ||
-		strings.Contains(lowerPrompt, "redraw"))
+		strings.Contains(lowerPrompt, "redraw")
+	wantsEdit := hasSourceImage && editTrigger
 	wantsDraw := strings.Contains(lowerPrompt, "🎨") || strings.Contains(lowerPrompt, "draw me a picture of")
 
 	switch {
+	case isHelpRequest(sanitizedUserPrompt):
+		return intentHelp, sanitizedUserPrompt
+	case editTrigger && !hasSourceImage && !wantsDraw:
+		return intentEditNoImage, sanitizedUserPrompt
 	case wantsEdit:
 		return intentEdit, stripEditTriggers(sanitizedUserPrompt)
 	case wantsDraw:
@@ -270,6 +277,10 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	intent, prompt := classifyMessage(m.Content, self.ID, sourceImageURL != "")
 
 	switch intent {
+	case intentHelp:
+		err = b.sendMessage(ctx, responseChannel, helpText(b.imageBaseURL))
+	case intentEditNoImage:
+		err = b.sendMessage(ctx, responseChannel, msgEditNeedsImage)
 	case intentEdit:
 		err = b.handleImageEditMessage(ctx, responseChannel, prompt, sourceImageURL, m)
 	case intentDraw:

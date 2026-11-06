@@ -132,7 +132,12 @@ func TestClassifyMessage(t *testing.T) {
 		{"edit pencil", me + " ✏️ add a hat", true, intentEdit, "add a hat"},
 		{"edit colon", me + " Edit: add a hat", true, intentEdit, "add a hat"},
 		{"redraw", me + " redraw as a cat", true, intentEdit, "as a cat"},
-		{"edit without source is chat", me + " edit: add a hat", false, intentChat, " edit: add a hat"},
+		{"edit without source says so", me + " edit: add a hat", false, intentEditNoImage, " edit: add a hat"},
+		{"redraw without source says so", me + " ✏️ add a hat", false, intentEditNoImage, " ✏️ add a hat"},
+		{"draw beats edit without source", me + " 🎨 edit: a hat", false, intentDraw, "edit: a hat"},
+		{"help", me + " help", false, intentHelp, " help"},
+		{"help punctuated", me + "  Help! ", true, intentHelp, "  Help! "},
+		{"help me is chat", me + " help me write a poem", false, intentChat, " help me write a poem"},
 		{"edit wins over draw", me + " 🎨 edit: add a hat", true, intentEdit, "🎨  add a hat"},
 		{"source without trigger is chat", me + " nice picture", true, intentChat, " nice picture"},
 	}
