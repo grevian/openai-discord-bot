@@ -10,6 +10,7 @@ env:
   AWS_REGION: ca-central-1
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/openai-discord-bot
   SSM_IMAGE_TAG_PARAM: /openai-discord-bot/prod/image_tag
+  SSM_KAGI_API_KEY_PARAM: /openai-discord-bot/prod/kagi_api_key
 
 jobs:
   ci:
@@ -64,6 +65,29 @@ jobs:
             --value "${{ github.sha }}" \
             --type String \
             --overwrite
+
+      # The bot reads the key from SSM when it starts (start-bot.sh), so this
+      # runs before the restart. The parameter itself is created by terraform.
+      - name: Sync Kagi API key to SSM
+        env:
+          KAGI_API_KEY: ${{ secrets.KAGI_API_KEY }}
+        run: |
+          if [ -z "$KAGI_API_KEY" ]; then
+            echo "::notice::KAGI_API_KEY secret is not set; link summaries stay disabled"
+            exit 0
+          fi
+          if ! CURRENT=$(aws ssm get-parameter --name "$SSM_KAGI_API_KEY_PARAM" --with-decryption \
+            --query 'Parameter.Value' --output text 2>/dev/null); then
+            echo "::warning::$SSM_KAGI_API_KEY_PARAM does not exist yet; run the Terraform workflow, then deploy again"
+            exit 0
+          fi
+          if [ "$CURRENT" = "$KAGI_API_KEY" ]; then
+            echo "Kagi API key is up to date"
+            exit 0
+          fi
+          aws ssm put-parameter --name "$SSM_KAGI_API_KEY_PARAM" --value "$KAGI_API_KEY" \
+            --type SecureString --overwrite > /dev/null
+          echo "Kagi API key updated"
 
       - name: Restart bot via SSM Run Command
         run: |

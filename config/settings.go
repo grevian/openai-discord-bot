@@ -39,6 +39,8 @@ func loadBotSettings(v *viper.Viper) (bot.Settings, error) {
 	return bot.Settings{
 		OperatorChannelID: channelID,
 		ImageBaseURL:      imageBaseURL,
+		// Optional: empty disables link summaries.
+		KagiAPIKey: strings.TrimSpace(v.GetString("KAGI_API_KEY")),
 	}, nil
 }
 

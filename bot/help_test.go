@@ -55,7 +55,7 @@ func TestEditWithoutImageSaysSo(t *testing.T) {
 // Every trigger and limit must appear in the help reply, the README and the
 // help page. Add new triggers here (see AGENTS.md).
 func TestDocsMentionEveryTrigger(t *testing.T) {
-	needles := []string{"🧵", "🎨", "draw me a picture of", "✏️", "edit:", "redraw", "png", "jpeg", "webp", "50MB", "1024x1024", "help"}
+	needles := []string{"🧵", "🎨", "draw me a picture of", "✏️", "edit:", "redraw", "png", "jpeg", "webp", "50MB", "1024x1024", "help", "📰", "summarize", "https", "12,000"}
 	// The code must still recognise the triggers the docs promise.
 	for _, c := range []struct {
 		msg  string
@@ -65,6 +65,8 @@ func TestDocsMentionEveryTrigger(t *testing.T) {
 		{"🎨 x", false, intentDraw}, {"draw me a picture of x", false, intentDraw},
 		{"✏️ x", true, intentEdit}, {"edit: x", true, intentEdit}, {"redraw x", true, intentEdit},
 		{"edit: x", false, intentEditNoImage}, {"help", false, intentHelp},
+		{"https://example.com/a", false, intentSummarize}, {"📰 https://example.com/a", false, intentSummarize},
+		{"summarize https://example.com/a", false, intentSummarize},
 	} {
 		if got, _ := classifyMessage(c.msg, botID, c.src); got != c.want {
 			t.Errorf("classifyMessage(%q, image=%v) = %v, want %v", c.msg, c.src, got, c.want)

@@ -31,6 +31,7 @@ resource "aws_iam_role_policy" "bot_ssm_params" {
         aws_ssm_parameter.discord_token.arn,
         aws_ssm_parameter.openai_token.arn,
         aws_ssm_parameter.honeycomb_api_key.arn,
+        aws_ssm_parameter.kagi_api_key.arn,
         aws_ssm_parameter.image_tag.arn,
       ]
     }]

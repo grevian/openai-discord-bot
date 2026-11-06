@@ -25,6 +25,9 @@ type timeouts struct {
 	Discord time.Duration
 	// Gallery bounds one gallery publish (a handful of small S3 writes).
 	Gallery time.Duration
+	// LinkExtract bounds one page extraction (a Kagi Extract call). It must
+	// be longer than kagiPageTimeout, the time Kagi is asked to take.
+	LinkExtract time.Duration
 	// TypingRefresh is how often the "typing" indicator is re-sent while a
 	// request is being handled. Discord shows one for about 10 seconds.
 	TypingRefresh time.Duration
@@ -32,13 +35,13 @@ type timeouts struct {
 
 func defaultTimeouts() timeouts {
 	return timeouts{
-		Request:     5 * time.Minute,
-		OpenAIText:  90 * time.Second,
-		OpenAIImage: 3 * time.Minute,
-		Storage:     30 * time.Second,
-		Discord:     30 * time.Second,
-		Gallery:     20 * time.Second,
-
+		Request:       5 * time.Minute,
+		OpenAIText:    90 * time.Second,
+		OpenAIImage:   3 * time.Minute,
+		Storage:       30 * time.Second,
+		Discord:       30 * time.Second,
+		Gallery:       20 * time.Second,
+		LinkExtract:   25 * time.Second,
 		TypingRefresh: 8 * time.Second,
 	}
 }

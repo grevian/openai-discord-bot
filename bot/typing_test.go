@@ -183,3 +183,49 @@ func TestImageTypingCoversUploadAndStopsBeforeArchiveWait(t *testing.T) {
 		t.Errorf("typing still on during the S3 archive: %d -> %d", archiveStart, archiveEnd)
 	}
 }
+
+// slowLinks is a linkExtractor that waits for typing refreshes before
+// answering, like a slow Kagi call.
+type slowLinks struct {
+	t *testing.T
+	f *fakeDiscord
+}
+
+func (s slowLinks) Extract(context.Context, string) (string, error) {
+	waitForTyping(s.t, s.f, 3)
+	return "page text", nil
+}
+
+// The Kagi call and the model call together can outlast one indicator, so
+// typing must refresh through both and stop before the summary is posted.
+func TestTypingCoversSummaryAndStopsBeforeReply(t *testing.T) {
+	tb := fastTypingBot(t)
+	tb.bot.links = slowLinks{t: t, f: tb.discord}
+	var atModel int
+	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+		atModel = tb.discord.typingCount()
+		waitForTyping(t, tb.discord, atModel+2)
+		return textResponse("a summary"), nil
+	}
+	var atSend, afterSleep int
+	tb.discord.mu.Lock()
+	tb.discord.onSendComplex = func() {
+		atSend = tb.discord.typingCount()
+		time.Sleep(30 * time.Millisecond) // a slow POST
+		afterSleep = tb.discord.typingCount()
+	}
+	tb.discord.mu.Unlock()
+
+	tb.bot.handleMessage(context.Background(), mention("📰 https://example.com/a"))
+
+	if sent := tb.discord.sentMessages(); len(sent) != 1 || sent[0].Content != "a summary" {
+		t.Fatalf("expected the summary, got %+v", sent)
+	}
+	if atModel < 3 {
+		t.Errorf("typing was not refreshed during the Kagi call: %d calls", atModel)
+	}
+	if atSend != afterSleep {
+		t.Fatalf("typing sent while the summary was being posted: %d -> %d", atSend, afterSleep)
+	}
+	assertTypingStopped(t, tb.discord)
+}

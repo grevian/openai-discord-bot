@@ -39,6 +39,9 @@ type Settings struct {
 	// ImageBaseURL is the public origin that archived images are served from,
 	// without a trailing slash. An image key is appended to it.
 	ImageBaseURL string
+	// KagiAPIKey authenticates link summaries with the Kagi Extract API.
+	// Empty disables them: the summarise trigger then says so.
+	KagiAPIKey string
 }
 
 type AIBot struct {
@@ -57,6 +60,9 @@ type AIBot struct {
 	imageBaseURL        string
 	// gallery publishes images to the public gallery. Nil disables it.
 	gallery galleryPublisher
+	// links extracts page text for link summaries. Nil means summaries are
+	// not configured.
+	links linkExtractor
 	// galleryWG tracks in-flight gallery publishes.
 	galleryWG sync.WaitGroup
 
@@ -131,6 +137,11 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 		operatorChannelID:   settings.OperatorChannelID,
 		imageBaseURL:        settings.ImageBaseURL,
 	}
+	if settings.KagiAPIKey != "" {
+		bot.links = newKagiClient(settings.KagiAPIKey)
+	} else {
+		slog.Warn("BOT_KAGI_API_KEY is not set, link summaries are disabled")
+	}
 
 	// TODO Wire up more handlers
 	discordSession.AddHandler(bot.ReadyHandler)
@@ -167,6 +178,9 @@ const (
 	intentEdit
 	intentEditNoImage // edit trigger without an image to edit
 	intentHelp
+	// intentSummarize asks for a summary of a linked page; the prompt is
+	// the URL.
+	intentSummarize
 )
 
 // maxEditSourceBytes is the size at which a source image is refused for an
@@ -197,6 +211,7 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 		strings.Contains(lowerPrompt, "redraw")
 	wantsEdit := hasSourceImage && editTrigger
 	wantsDraw := strings.Contains(lowerPrompt, "🎨") || strings.Contains(lowerPrompt, "draw me a picture of")
+	summaryURL, wantsSummary := summarizeTarget(strings.ReplaceAll(sanitizedUserPrompt, fmt.Sprintf("<@!%s>", botID), ""))
 
 	// Without an image the match is anchored to the start of the message, so
 	// ordinary chat ("credit: ...", "can you redraw my thinking") still chats.
@@ -212,6 +227,8 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 	case wantsDraw:
 		// Strip the prompt prefix out of the message
 		return intentDraw, stripDrawTriggers(sanitizedUserPrompt)
+	case wantsSummary:
+		return intentSummarize, summaryURL
 	default:
 		return intentChat, sanitizedUserPrompt
 	}
@@ -295,6 +312,8 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 		err = b.handleImageEditMessage(ctx, responseChannel, prompt, sourceImageURL, m)
 	case intentDraw:
 		err = b.handleImageMessage(ctx, responseChannel, prompt, m)
+	case intentSummarize:
+		err = b.handleSummarizeMessage(ctx, responseChannel, prompt, m)
 	default:
 		err = b.handleCompletionPrompt(ctx, responseChannel, prompt, threadPromptContext, m)
 	}
