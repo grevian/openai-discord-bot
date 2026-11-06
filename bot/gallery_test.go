@@ -313,3 +313,49 @@ func TestDrainIdleIsImmediate(t *testing.T) {
 		t.Errorf("idle drain took %v", d)
 	}
 }
+
+// A handler still running after Drain gave up can start a publish; the gallery
+// step must wait for it rather than race its WaitGroup.Add.
+func TestDrainGalleryWaitsForStragglerHandler(t *testing.T) {
+	g := &fakeGallery{block: make(chan struct{}), entered: make(chan struct{}, 1)}
+	tb := drawingBot(t, g)
+	hctx, ok := tb.bot.beginRequest()
+	if !ok {
+		t.Fatal("request rejected")
+	}
+
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := tb.bot.Drain(expired); err == nil {
+		t.Fatal("Drain should time out with a handler running")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		done <- tb.bot.DrainGallery(ctx)
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("DrainGallery returned with a handler still running: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// The straggler finishes and starts a publish on its way out.
+	tb.bot.publishToGallery(hctx, gallery.Submission{ImageKey: "k"})
+	tb.bot.inflight.Done()
+	<-g.entered
+	select {
+	case err := <-done:
+		t.Fatalf("DrainGallery returned with a publish running: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(g.block)
+	if err := <-done; err != nil {
+		t.Fatalf("DrainGallery: %v", err)
+	}
+	if len(g.submissions()) != 1 {
+		t.Error("the straggler's publish did not complete")
+	}
+}

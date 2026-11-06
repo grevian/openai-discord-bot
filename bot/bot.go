@@ -438,12 +438,20 @@ func (b *AIBot) Drain(ctx context.Context) error {
 }
 
 // DrainGallery waits for gallery publishes that are already running, or for
-// ctx to expire. Call it after Drain: publishes only start inside an admitted
-// handler, so none can begin once the handlers have finished. They are
-// best-effort, but a deploy should not drop the image it was just handed.
-// It returns ctx's error if publishes were still running.
+// ctx to expire. Publishes only start inside an admitted handler, so it first
+// waits for the handlers to finish too: after a Drain timeout, cancelled
+// handlers may still be winding down and can start a publish (WaitGroup.Add
+// must not race Wait). They are best-effort, but a deploy should not drop the
+// image it was just handed. It returns ctx's error if work was still running.
 func (b *AIBot) DrainGallery(ctx context.Context) error {
-	return waitOrCancel(ctx, &b.galleryWG, nil)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		b.inflight.Wait()
+		b.galleryWG.Wait()
+	}()
+	return waitOrCancel(ctx, &wg, nil)
 }
 
 // waitOrCancel waits for wg or ctx. On ctx expiry it calls onTimeout (if any)
