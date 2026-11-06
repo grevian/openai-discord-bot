@@ -151,7 +151,7 @@ func TestSummarizeSendsDelimitedTruncatedPageWithoutTools(t *testing.T) {
 	body := user.Content.OfString.Value
 	start := strings.Index(body, "<untrusted_page>\n")
 	end := strings.LastIndex(body, "\n</untrusted_page>")
-	if start < 0 || end < 0 || !strings.HasSuffix(body, "</untrusted_page>") {
+	if start < 0 || end < 0 || !strings.HasSuffix(body, "\n\n"+summarizeReminder) || end > strings.LastIndex(body, summarizeReminder) {
 		t.Fatalf("page text is not delimited: %q", body[:min(len(body), 200)])
 	}
 	data := body[start+len("<untrusted_page>\n") : end]
