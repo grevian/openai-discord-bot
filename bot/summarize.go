@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
@@ -55,7 +56,7 @@ func summarizeTarget(prompt string) (string, bool) {
 	if loc == nil {
 		return "", false
 	}
-	link := strings.TrimRight(prompt[loc[2]:loc[3]], ".,!?;:'\"")
+	link := trimLinkEnd(prompt[loc[2]:loc[3]])
 	if strings.Contains(prompt, "📰") || summarizeWord.MatchString(prompt) {
 		return link, true
 	}
@@ -65,6 +66,24 @@ func summarizeTarget(prompt string) (string, bool) {
 		return link, true
 	}
 	return "", false
+}
+
+// trimLinkEnd removes what usually follows a link in prose rather than being
+// part of it: sentence punctuation, a spoiler's closing "||", and a closing
+// ")" from a markdown link "[x](url)" or a parenthesised "(url)". A ")" that
+// balances a "(" inside the URL (as in ..._(disambiguation)) is kept.
+func trimLinkEnd(link string) string {
+	for {
+		trimmed := strings.TrimRight(link, ".,!?;:'\"")
+		trimmed = strings.TrimSuffix(trimmed, "||")
+		if strings.HasSuffix(trimmed, ")") && strings.Count(trimmed, ")") > strings.Count(trimmed, "(") {
+			trimmed = trimmed[:len(trimmed)-1]
+		}
+		if trimmed == link {
+			return link
+		}
+		link = trimmed
+	}
 }
 
 // validateSummaryURL accepts only https URLs with a host and no credentials.
@@ -89,8 +108,9 @@ func truncateRunes(s string, n int) (string, bool) {
 }
 
 // untrustedPageTags matches anything that could open or close the delimiter
-// the page text is wrapped in, so the page cannot end its own data block.
-var untrustedPageTags = regexp.MustCompile(`(?i)</?\s*untrusted_page\s*>?`)
+// the page text is wrapped in, so the page cannot end its own data block. It
+// tolerates whitespace around the slash and the name, and any letter case.
+var untrustedPageTags = regexp.MustCompile(`(?i)<\s*/?\s*untrusted_page\s*>?`)
 
 // summaryUserMessage wraps the page text as delimited data.
 func summaryUserMessage(pageURL, pageText string, truncated bool) string {
@@ -132,7 +152,7 @@ func (b *AIBot) handleSummarizeMessage(ctx context.Context, responseChannel, raw
 		return newUserError(msgLinkUnreadable, fmt.Errorf("%w: empty text", errLinkUnreadable))
 	}
 	pageText, truncated := truncateRunes(pageText, maxSummarySourceChars)
-	span.SetAttributes(attribute.Int("page_chars", len(pageText)), attribute.Bool("truncated", truncated))
+	span.SetAttributes(attribute.Int("page_chars", utf8.RuneCountInString(pageText)), attribute.Bool("truncated", truncated))
 
 	inputItems := make([]responses.ResponseInputItemUnionParam, 0, len(b.basePrompt)+1)
 	for _, msg := range b.basePrompt {

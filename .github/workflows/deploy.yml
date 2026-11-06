@@ -76,9 +76,18 @@ jobs:
             echo "::notice::KAGI_API_KEY secret is not set; link summaries stay disabled"
             exit 0
           fi
+          ERR_FILE="$RUNNER_TEMP/kagi-ssm-get.err"
           if ! CURRENT=$(aws ssm get-parameter --name "$SSM_KAGI_API_KEY_PARAM" --with-decryption \
-            --query 'Parameter.Value' --output text 2>/dev/null); then
-            echo "::warning::$SSM_KAGI_API_KEY_PARAM does not exist yet; run the Terraform workflow, then deploy again"
+            --query 'Parameter.Value' --output text 2>"$ERR_FILE"); then
+            # Only a missing parameter means "not created yet"; anything else
+            # (usually AccessDenied) is reported as its own error.
+            if grep -q 'ParameterNotFound' "$ERR_FILE"; then
+              echo "::warning::$SSM_KAGI_API_KEY_PARAM does not exist yet; run the Terraform workflow, then deploy again"
+            elif grep -q 'AccessDenied' "$ERR_FILE"; then
+              echo "::error::AccessDenied reading $SSM_KAGI_API_KEY_PARAM. The deploy role needs ssm:GetParameter on it (and kms:Decrypt on its key). The Kagi key was not synced."
+            else
+              echo "::error::could not read $SSM_KAGI_API_KEY_PARAM: $(cat "$ERR_FILE")"
+            fi
             exit 0
           fi
           if [ "$CURRENT" = "$KAGI_API_KEY" ]; then
