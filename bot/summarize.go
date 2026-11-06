@@ -20,7 +20,8 @@ import (
 
 // maxSummarySourceChars is how much of the extracted page text, in
 // characters (runes), is sent to the model to summarise. Longer pages are cut
-// at this length. Change it here to trade cost against coverage.
+// at this length. Change it here to trade cost against coverage, and update
+// the "12,000" in the docs and TestDocsMentionEveryTrigger (see AGENTS.md).
 const maxSummarySourceChars = 12_000
 
 // summarizeInstructions are appended to the persona instructions for a
