@@ -4,7 +4,7 @@ This is a silly discord to openai bot designed to amuse myself and my friends
 
 ## Interacting with the bot
 
-Every request starts with an `@Danbot` mention. Say `@Danbot help` on its own for this list in the bot's voice, or see the [help page](https://sillybullshit.click/gallery/help.html).
+Every request starts with an `@Danbot` mention. Say `@Danbot help` on its own for this list in the bot's voice, or see the [help page](https://sillybullshit.click/help/).
 
 | You write | What happens |
 | --- | --- |
@@ -57,9 +57,9 @@ The bot refuses to start if either value is invalid.
 
 ## Deployment
 
-Infrastructure is managed by Terraform under [`terraform/`](terraform/). A single EC2 instance (Graviton, `t4g.nano` by default, Amazon Linux 2023) runs the bot in Docker, with an OpenTelemetry collector (`otelcol-contrib`) as a systemd service, in `ca-central-1`, fronted by CloudFront on `sillybullshit.click` for image fetches. State lives in an S3 backend (`openai-discord-bot-tfstate-537108148763`) with native locking.
+Infrastructure is managed by Terraform under [`terraform/`](terraform/). A single EC2 instance (Graviton, `t4g.nano` by default, Amazon Linux 2023) runs the bot in Docker, with an OpenTelemetry collector (`otelcol-contrib`) as a systemd service, in `ca-central-1`, fronted by CloudFront on `sillybullshit.click` for image fetches and the static pages: the homepage (`/`, from `gallery/home/`), `/gallery/` and `/help/`. The bot uploads those pages to the bucket on every start; a CloudFront Function (`terraform/clean-urls.js`) maps `/x/` to `/x/index.html` and redirects `/gallery` and `/help` to the slash form, so no URL needs `index.html`. To add a page, add its name to `PAGES` in that file. State lives in an S3 backend (`openai-discord-bot-tfstate-537108148763`) with native locking.
 
-Pushes to `master` trigger [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), which OIDC-assumes a role with `AdministratorAccess`, builds and pushes the arm64 image to GitHub Container Registry (`ghcr.io`) tagged with the commit SHA and `latest`, writes the SHA to the `/openai-discord-bot/prod/image_tag` SSM parameter, and uses SSM Run Command to restart the `bot` systemd service on the instance, which pulls that tag. Terraform is not run by the deploy workflow. To change infrastructure manually:
+Pushes to `master` trigger [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), which OIDC-assumes a role with `AdministratorAccess`, builds and pushes the arm64 image to GitHub Container Registry (`ghcr.io`) tagged with the commit SHA and `latest`, writes the SHA to the `/openai-discord-bot/prod/image_tag` SSM parameter, and uses SSM Run Command to restart the `bot` systemd service on the instance, which pulls that tag. Terraform is not run by the deploy workflow; changes under `terraform/` need a manual run of the `Terraform` workflow (`workflow_dispatch`: plan, then apply) or:
 
 ```
 cd terraform

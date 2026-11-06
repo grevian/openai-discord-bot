@@ -7,7 +7,7 @@ import (
 
 // helpPath is where the help page lives under the image base URL (it is
 // uploaded next to the gallery by gallery.PublishSite).
-const helpPath = "/gallery/help.html"
+const helpPath = "/help/"
 
 // msgEditNeedsImage is sent when an edit is asked for but there is no image to
 // edit. It is static, so no model call is made.
