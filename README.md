@@ -67,6 +67,8 @@ terraform init
 terraform apply
 ```
 
+The instance only reads its user-data (`start-bot.sh`: secrets, `docker run` flags) when it first boots, and the ASG follows the launch template's `$Latest` version, so Terraform changes to the launch template do not reach the running instance by themselves. The [`Instance Refresh`](.github/workflows/instance-refresh.yml) workflow replaces the instance: it refuses to start while another refresh is running, starts a rolling refresh with `MinHealthyPercentage=0` and waits (20 minute limit) for it to finish, failing on any end state other than `Successful`. It runs automatically after the `Terraform` workflow when the apply changed `aws_launch_template.bot` (untick `refresh-instance` to skip), and can be run by hand (`workflow_dispatch`) for changes applied locally. **The bot is offline for a few minutes during a refresh**: with a single instance there is no spare capacity, and two bots on one Discord token would fight over the session. It needs `autoscaling:StartInstanceRefresh` and `autoscaling:DescribeInstanceRefreshes` on the OIDC role (`AWS_ROLE_TO_ASSUME`); the role is not defined in this repo's Terraform and has `AdministratorAccess`, so nothing needs adding unless it is ever narrowed.
+
 Secrets live in SSM SecureString parameters and are read by the instance at startup — values are populated out-of-band (not in Terraform state):
 
 - `/openai-discord-bot/prod/discord_token`

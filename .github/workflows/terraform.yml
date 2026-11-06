@@ -2,12 +2,19 @@ name: Terraform
 
 on:
   workflow_dispatch:
+    inputs:
+      refresh-instance:
+        description: Replace the bot instance after the apply if it changed the launch template (user-data)
+        type: boolean
+        default: true
 
 env:
   AWS_REGION: ca-central-1
 
 jobs:
   terraform:
+    outputs:
+      launch-template-changed: ${{ steps.plan.outputs.launch-template-changed }}
     environment: production
     runs-on: ubuntu-24.04-arm
     concurrency: production
@@ -35,9 +42,36 @@ jobs:
         run: terraform init
 
       - name: Terraform Plan
+        id: plan
         working-directory: terraform
-        run: terraform plan
+        run: |
+          terraform plan -out=tfplan
+          # The ASG follows the launch template's $Latest version, so a change
+          # to it (new user-data, AMI, ...) only reaches the instance via a refresh.
+          terraform show -json tfplan > plan.json
+          CHANGED=$(jq -r '
+            [.resource_changes[]?
+              | select(.type == "aws_launch_template" and .name == "bot")
+              | select(.change.actions | any(. == "create" or . == "update" or . == "delete"))]
+            | length > 0' plan.json)
+          if [ "$CHANGED" != "true" ] && [ "$CHANGED" != "false" ]; then
+            echo "::error::could not tell whether the launch template changed (got '$CHANGED')"
+            exit 1
+          fi
+          echo "Launch template changed: $CHANGED"
+          echo "launch-template-changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve tfplan
+
+  instance-refresh:
+    name: instance-refresh
+    needs: terraform
+    if: ${{ inputs.refresh-instance && needs.terraform.outputs.launch-template-changed == 'true' }}
+    uses: ./.github/workflows/instance-refresh.yml
+    secrets:
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+    permissions:
+      id-token: write
+      contents: read
