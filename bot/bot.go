@@ -262,9 +262,12 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	logger.DebugContext(ctx, "loaded thread context", slog.Int("thread_length", len(threadPromptContext)))
 
 	// Let users know we're "typing", the call to OpenAI can take a few seconds
-	typingOpt, cancelTyping := b.discordCtx(ctx)
-	_ = b.discord.ChannelTyping(responseChannel, typingOpt)
-	cancelTyping()
+	// A single ChannelTyping call lasts about 10 seconds, so keep refreshing it
+	// until the reply is sent. The deferred stop covers every return path,
+	// including panics; the success paths stop it earlier, right after the
+	// reply goes out.
+	ctx, stopTyping := b.keepTyping(ctx, responseChannel)
+	defer stopTyping()
 
 	sourceImageURL := b.findEditSourceImage(ctx, m)
 	intent, prompt := classifyMessage(m.Content, self.ID, sourceImageURL != "")
@@ -277,6 +280,9 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	default:
 		err = b.handleCompletionPrompt(ctx, responseChannel, prompt, threadPromptContext, m)
 	}
+	// Stop before posting anything so the indicator cannot reappear after
+	// the final message.
+	stopTyping()
 	if err != nil {
 		b.reportError(ctx, span, responseChannel, failureMessage(err), err)
 		return
@@ -508,6 +514,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 		},
 	}, opt)
 	cancel()
+	stopTypingFromContext(ctx)
 	wg.Wait()
 	if err != nil {
 		return fmt.Errorf("failed to send embedded image to discord: %w", err)
