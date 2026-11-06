@@ -13,10 +13,26 @@ import (
 //go:embed config.json
 var embeddedConfig []byte
 
-// siteFS is the static page that is uploaded to the bucket.
+// siteFS holds the static pages that are uploaded to the bucket: site/ is the
+// gallery (keys under gallery/) and home/ is the homepage (keys at the root).
 //
-//go:embed site
+//go:embed site home
 var siteFS embed.FS
+
+// siteMount maps a directory of siteFS to a key prefix in the bucket.
+type siteMount struct{ dir, prefix string }
+
+var siteMounts = []siteMount{
+	{dir: "site", prefix: Prefix},
+	{dir: "home", prefix: ""},
+}
+
+// siteAliases are extra copies of an uploaded key, so a page also answers at a
+// clean URL (/help/ is served by CloudFront as help/index.html) while its old
+// URL keeps working. An alias is skipped when its source does not exist.
+var siteAliases = map[string]string{
+	Prefix + "help.html": "help/index.html",
+}
 
 const siteCacheControl = "public, max-age=300"
 
@@ -42,33 +58,52 @@ var contentTypes = map[string]string{
 	".js":   "text/javascript; charset=utf-8",
 }
 
-// PublishSite uploads the static page (index.html, gallery.js, gallery.css) to
-// gallery/ in the bucket. The bot calls it on start so that deploying the bot
-// also deploys the page. Every file is attempted; the errors are joined.
+// PublishSite uploads the static pages to the bucket: the gallery under
+// gallery/ and the homepage at the root (see siteMounts). The bot calls it on
+// start so that deploying the bot also deploys the pages. Every file is
+// attempted; the errors are joined.
 func (g *Gallery) PublishSite(ctx context.Context) error {
 	if !g.cfg.Enabled {
 		return nil
 	}
-	entries, err := fs.ReadDir(siteFS, "site")
-	if err != nil {
-		return fmt.Errorf("read embedded site: %w", err)
-	}
+	return g.uploadSite(ctx, siteFS, siteMounts, siteAliases)
+}
+
+func (g *Gallery) uploadSite(ctx context.Context, fsys fs.FS, mounts []siteMount, aliases map[string]string) error {
 	var errs []error
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
+	put := func(key string, body []byte, ct string) {
+		if err := g.store.Put(ctx, key, body, PutOptions{ContentType: ct, CacheControl: siteCacheControl}); err != nil {
+			errs = append(errs, fmt.Errorf("upload %s: %w", key, err))
 		}
-		body, err := fs.ReadFile(siteFS, path.Join("site", e.Name()))
+	}
+	uploaded := map[string][]byte{}
+	for _, m := range mounts {
+		entries, err := fs.ReadDir(fsys, m.dir)
 		if err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("read embedded %s: %w", m.dir, err))
 			continue
 		}
-		ct, ok := contentTypes[path.Ext(e.Name())]
-		if !ok {
-			continue
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			ct, ok := contentTypes[path.Ext(e.Name())]
+			if !ok {
+				continue
+			}
+			body, err := fs.ReadFile(fsys, path.Join(m.dir, e.Name()))
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			key := m.prefix + e.Name()
+			uploaded[key] = body
+			put(key, body, ct)
 		}
-		if err := g.store.Put(ctx, Prefix+e.Name(), body, PutOptions{ContentType: ct, CacheControl: siteCacheControl}); err != nil {
-			errs = append(errs, fmt.Errorf("upload %s: %w", e.Name(), err))
+	}
+	for src, dst := range aliases {
+		if body, ok := uploaded[src]; ok {
+			put(dst, body, contentTypes[path.Ext(src)])
 		}
 	}
 	return errors.Join(errs...)

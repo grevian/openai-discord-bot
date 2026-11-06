@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestEmbeddedConfig(t *testing.T) {
@@ -46,6 +47,8 @@ func TestPublishSiteUploadsPageWithTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
+		"index.html":          "text/html; charset=utf-8",
+		"home.css":            "text/css; charset=utf-8",
 		"gallery/index.html":  "text/html; charset=utf-8",
 		"gallery/gallery.js":  "text/javascript; charset=utf-8",
 		"gallery/gallery.css": "text/css; charset=utf-8",
@@ -65,6 +68,63 @@ func TestPublishSiteUploadsPageWithTypes(t *testing.T) {
 	}
 	if len(store.objects) != len(want) {
 		t.Errorf("uploaded %d objects, want %d", len(store.objects), len(want))
+	}
+}
+
+func TestUploadSiteMountsAndAliases(t *testing.T) {
+	fsys := fstest.MapFS{
+		"site/page.html":  {Data: []byte("page")},
+		"site/skip.txt":   {Data: []byte("not served")},
+		"home/index.html": {Data: []byte("home")},
+	}
+	store := newMemStore()
+	g := newTestGallery(defaultCfg, store)
+	mounts := []siteMount{{dir: "site", prefix: "gallery/"}, {dir: "home", prefix: ""}}
+	aliases := map[string]string{"gallery/page.html": "p/index.html", "gallery/missing.html": "m/index.html"}
+	if err := g.uploadSite(context.Background(), fsys, mounts, aliases); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"gallery/page.html", "p/index.html", "index.html"} {
+		if _, ok := store.objects[key]; !ok {
+			t.Errorf("%s not uploaded", key)
+		}
+	}
+	if string(store.objects["p/index.html"].body) != "page" || store.objects["p/index.html"].opts.ContentType != "text/html; charset=utf-8" {
+		t.Errorf("alias is not a copy of its source: %+v", store.objects["p/index.html"])
+	}
+	if len(store.objects) != 3 {
+		t.Errorf("uploaded %d objects, want 3: unknown types and aliases of missing pages are skipped", len(store.objects))
+	}
+}
+
+func TestHomepageLinksAndPolicy(t *testing.T) {
+	b, err := siteFS.ReadFile("home/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, link := range []string{`href="/gallery/"`, `href="/help/"`, `href="https://github.com/grevian/openai-discord-bot"`} {
+		if !strings.Contains(html, link) {
+			t.Errorf("homepage does not link %s", link)
+		}
+	}
+	if strings.Contains(html, "index.html") {
+		t.Error("homepage links must be clean URLs")
+	}
+	if !strings.Contains(html, "Content-Security-Policy") || strings.Contains(html, "<script") {
+		t.Error("homepage needs a CSP and no script")
+	}
+}
+
+// The CloudFront Function that gives the pages clean URLs, under node.
+func TestCleanURLsFunction(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	out, err := exec.Command(node, "../terraform/clean-urls.test.js").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "ok") {
+		t.Fatalf("clean-urls test failed: %v\n%s", err, out)
 	}
 }
 

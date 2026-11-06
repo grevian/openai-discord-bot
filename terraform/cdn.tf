@@ -16,12 +16,25 @@ resource "aws_cloudfront_origin_access_control" "images" {
   signing_protocol                  = "sigv4"
 }
 
+# Clean URLs for the static pages: "/gallery" redirects to "/gallery/", and any
+# path ending in "/" is served from its index.html. See clean-urls.js, which
+# explains why image object keys are unaffected.
+resource "aws_cloudfront_function" "clean_urls" {
+  name    = "${local.name_prefix}-clean-urls"
+  runtime = "cloudfront-js-2.0"
+  comment = "Serve index.html for directory paths; redirect /gallery and /help to the trailing-slash form"
+  publish = true
+  code    = file("${path.module}/clean-urls.js")
+}
+
 resource "aws_cloudfront_distribution" "images" {
   enabled         = true
   is_ipv6_enabled = true
   aliases         = [local.domain]
   price_class     = "PriceClass_100"
   comment         = local.name_prefix
+
+  default_root_object = "index.html"
 
   origin {
     domain_name              = aws_s3_bucket.images.bucket_regional_domain_name
@@ -36,6 +49,11 @@ resource "aws_cloudfront_distribution" "images" {
     cached_methods         = ["GET", "HEAD"]
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
     compress               = true
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.clean_urls.arn
+    }
   }
 
   viewer_certificate {
