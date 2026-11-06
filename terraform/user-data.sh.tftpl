@@ -44,7 +44,7 @@ if [ "\$KAGI_API_KEY" = "populated-out-of-band" ]; then KAGI_API_KEY=""; fi
 IMAGE="\$IMAGE_REPO:\$IMAGE_TAG"
 docker pull "\$IMAGE"
 docker rm -f bot 2>/dev/null || true
-exec docker run --rm --name bot --network host \\
+exec docker run --rm --name bot --network host --stop-timeout 45 \\
   -e BOT_JSON_LOGS=true \\
   -e BOT_TRACING=true \\
   -e BOT_OTLP_LOGS=true \\
@@ -98,7 +98,8 @@ Wants=otel-collector.service network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/start-bot.sh
-ExecStop=/usr/bin/docker stop bot
+ExecStop=/usr/bin/docker stop -t 45 bot
+TimeoutStopSec=60
 Restart=always
 RestartSec=10
 

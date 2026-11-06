@@ -428,25 +428,39 @@ func (b *AIBot) Drain(ctx context.Context) error {
 	b.draining = true
 	b.lifeMu.Unlock()
 
+	return waitOrCancel(ctx, &b.inflight, func() {
+		b.lifeMu.Lock()
+		defer b.lifeMu.Unlock()
+		if b.handlerCancel != nil {
+			b.handlerCancel()
+		}
+	})
+}
+
+// DrainGallery waits for gallery publishes that are already running, or for
+// ctx to expire. Call it after Drain: publishes only start inside an admitted
+// handler, so none can begin once the handlers have finished. They are
+// best-effort, but a deploy should not drop the image it was just handed.
+// It returns ctx's error if publishes were still running.
+func (b *AIBot) DrainGallery(ctx context.Context) error {
+	return waitOrCancel(ctx, &b.galleryWG, nil)
+}
+
+// waitOrCancel waits for wg or ctx. On ctx expiry it calls onTimeout (if any)
+// and returns ctx's error. It never sleeps: an already-finished wg returns at once.
+func waitOrCancel(ctx context.Context, wg *sync.WaitGroup, onTimeout func()) error {
 	done := make(chan struct{})
 	go func() {
-		b.inflight.Wait()
-		// Gallery publishes are only started from inside an admitted handler,
-		// so none can begin once the handlers above have finished. They are
-		// best-effort, but let the ones already running finish within the
-		// drain budget rather than dropping them at exit.
-		b.galleryWG.Wait()
+		wg.Wait()
 		close(done)
 	}()
 	select {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		b.lifeMu.Lock()
-		if b.handlerCancel != nil {
-			b.handlerCancel()
+		if onTimeout != nil {
+			onTimeout()
 		}
-		b.lifeMu.Unlock()
 		return ctx.Err()
 	}
 }

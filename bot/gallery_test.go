@@ -252,9 +252,9 @@ func TestNoGalleryConfiguredIsFine(t *testing.T) {
 	}
 }
 
-// Drain waits for gallery publishes that are already running, so a deploy does
+// DrainGallery waits for gallery publishes that are already running, so a deploy does
 // not drop the image it was just handed.
-func TestDrainWaitsForGalleryPublishes(t *testing.T) {
+func TestDrainGalleryWaitsForPublishes(t *testing.T) {
 	g := &fakeGallery{block: make(chan struct{})}
 	tb := drawingBot(t, g)
 	tb.bot.messageCreate(nil, mention("🎨 a cat"))
@@ -263,18 +263,53 @@ func TestDrainWaitsForGalleryPublishes(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		drained <- tb.bot.Drain(ctx)
+		drained <- tb.bot.DrainGallery(ctx)
 	}()
 	select {
 	case err := <-drained:
-		t.Fatalf("Drain returned while a gallery publish was running: %v", err)
+		t.Fatalf("DrainGallery returned while a gallery publish was running: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(g.block)
 	if err := <-drained; err != nil {
-		t.Fatalf("Drain: %v", err)
+		t.Fatalf("DrainGallery: %v", err)
 	}
 	if len(g.submissions()) != 1 {
 		t.Error("the publish did not complete")
+	}
+}
+
+// A stuck publish must not hold shutdown past the gallery budget.
+func TestDrainGalleryGivesUpAtBudget(t *testing.T) {
+	g := &fakeGallery{block: make(chan struct{})}
+	defer close(g.block)
+	tb := drawingBot(t, g)
+	tb.bot.messageCreate(nil, mention("🎨 a cat"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := tb.bot.DrainGallery(ctx); err == nil {
+		t.Fatal("DrainGallery returned nil with a publish stuck")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("DrainGallery took %v", d)
+	}
+}
+
+// With nothing in flight the drain steps return immediately.
+func TestDrainIdleIsImmediate(t *testing.T) {
+	tb := drawingBot(t, &fakeGallery{})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := tb.bot.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tb.bot.DrainGallery(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Errorf("idle drain took %v", d)
 	}
 }

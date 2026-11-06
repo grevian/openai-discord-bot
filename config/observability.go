@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
@@ -44,9 +45,11 @@ func configureTracing(serviceCtx context.Context) error {
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	// Try to ensure any pending telemetry gets flushed when the service context terminates
+	flushWG.Add(1)
 	go func(lifecycleContext context.Context) {
+		defer flushWG.Done()
 		<-lifecycleContext.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), flushDeadline)
 		defer cancel()
 		// otlptracegrpc.New already started the exporter; shutting down the provider flushes
 		// pending spans and then shuts the exporter down too.
@@ -56,6 +59,29 @@ func configureTracing(serviceCtx context.Context) error {
 	}(serviceCtx)
 
 	return nil
+}
+
+// flushDeadline is each exporter's own flush deadline.
+const flushDeadline = 2 * time.Second
+
+// flushWG tracks the telemetry flushes started when the service context ends.
+var flushWG sync.WaitGroup
+
+// WaitFlushed blocks until the telemetry flushes triggered by cancelling the
+// service context have finished, or ctx expires. With no exporters configured
+// it returns immediately.
+func WaitFlushed(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		flushWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 var programLevel = new(slog.LevelVar)
@@ -85,13 +111,16 @@ func configureLogging(serviceCtx context.Context) error {
 		logger = otelslog.NewLogger("openai-discord-bot")
 
 		// Rather than trying to return a shutdown function to main, call it based on the serviceContext being terminated
+		flushWG.Add(1)
 		go func(lifecycleContext context.Context) {
+			defer flushWG.Done()
 			<-lifecycleContext.Done()
 			// The service context is terminated so we want to flush anything we can quickly before the service is terminated
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), flushDeadline)
 			defer cancel()
-			err := exp.Shutdown(shutdownCtx)
-			logger.ErrorContext(serviceCtx, "Failed to flush logging data", slog.Any("error", err))
+			if err := exp.Shutdown(shutdownCtx); err != nil {
+				logger.ErrorContext(serviceCtx, "Failed to flush logging data", slog.Any("error", err))
+			}
 		}(serviceCtx)
 	} else if viper.GetBool("JSON_LOGS") {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel}))
