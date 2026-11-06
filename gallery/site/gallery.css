@@ -159,3 +159,10 @@ footer p { margin: 6px 0; }
   .figure path[stroke] { stroke: #ece6d6; }
   .status.error { color: #f08a7c; }
 }
+
+/* help.html: a paper sheet, dark text in both colour schemes. */
+.help { max-width: 720px; margin: 24px auto 0; background: var(--paper); color: var(--crayon); padding: 8px 24px 20px; border-radius: 4px; }
+.help h2 { margin: 20px 0 6px; }
+.help code { background: rgba(74, 59, 48, 0.1); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+.help a { color: var(--crayon); }
+footer a { color: inherit; }

@@ -4,11 +4,24 @@ This is a silly discord to openai bot designed to amuse myself and my friends
 
 ## Interacting with the bot
 
-In most circumstances you can just `@Danbot` and recieve a response, if you include 🧵 in your message the response will be in a thread, which will retain context between messages, though you still have to `@Danbot` inside the thread to get responses
+Every request starts with an `@Danbot` mention. Say `@Danbot help` on its own for this list in the bot's voice, or see the [help page](https://sillybullshit.click/gallery/help.html).
+
+| You write | What happens |
+| --- | --- |
+| `@Danbot <anything>` | A chat reply in Danbot's persona |
+| `🧵` anywhere in the message | The reply goes in a new thread (60 minute auto-archive) which keeps context between messages; you still have to `@Danbot` inside the thread |
+| `@Danbot 🎨 <idea>` or `@Danbot draw me a picture of <idea>` | An AI-generated crayon stick-figure drawing, 1024x1024 |
+| `@Danbot ✏️ <change>`, `edit: <change>` or `redraw <change>`, with an image attached (or as a reply to one of the bot's own drawings) | An edited version of that image, 1024x1024 |
+| `@Danbot help` (the whole message) | A static help reply, no model call |
+
+Notes:
+
+- Draw triggers match anywhere in the message, case-insensitively; edit triggers (with an image) likewise. With an image, edit beats draw, which beats chat. Without one, a message that starts with an edit trigger gets the "need an image" reply (unless it also draws).
+- The image to edit must be png, jpeg or webp and under 50MB. Without an image, an edit request gets a short reply saying one is needed.
+- Generated images are archived and, when the gallery is enabled, shown in the [gallery](https://sillybullshit.click/gallery/) (newest 48).
+- Slash commands are not supported yet.
 
 ![conversational interactions](https://user-images.githubusercontent.com/603334/230736019-528a4a65-f787-4a16-918f-43c2f0203ddd.png)
-
-The bot also supports requests to `@Danbot draw me a picture of <something>` which will respond with an AI-generated picture as requested
 
 ![drawing interactions](https://user-images.githubusercontent.com/603334/230735886-4d869e36-919b-4f1c-8fab-3cfe5e6cf0cc.png)
 

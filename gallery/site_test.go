@@ -52,6 +52,7 @@ func TestPublishSiteUploadsPageWithTypes(t *testing.T) {
 		"gallery/index.html":  "text/html; charset=utf-8",
 		"gallery/gallery.js":  "text/javascript; charset=utf-8",
 		"gallery/gallery.css": "text/css; charset=utf-8",
+		"gallery/help.html":   "text/html; charset=utf-8",
 	}
 	for key, ct := range want {
 		o, ok := store.objects[key]
@@ -166,7 +167,14 @@ func TestPageNeverUsesHTMLSinks(t *testing.T) {
 }
 
 func TestPageIsNoindexWithStrictCSP(t *testing.T) {
-	html := readSite(t, "index.html")
+	for _, name := range []string{"index.html", "help.html"} {
+		t.Run(name, func(t *testing.T) { checkNoindexStrictCSP(t, name) })
+	}
+}
+
+func checkNoindexStrictCSP(t *testing.T, name string) {
+	t.Helper()
+	html := readSite(t, name)
 	if !regexp.MustCompile(`<meta name="robots" content="[^"]*noindex`).MatchString(html) {
 		t.Error("index.html must be noindex until moderation exists")
 	}
