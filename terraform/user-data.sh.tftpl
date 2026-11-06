@@ -37,6 +37,9 @@ CONVERSATIONS_TBL="$CONVERSATIONS_TBL"
 IMAGE_TAG=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/image_tag" --query 'Parameter.Value' --output text --region "\$REGION")
 DISCORD_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/discord_token" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
 OPENAI_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/openai_token" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
+# Optional: link summaries stay off when the key can't be read or is the placeholder.
+KAGI_API_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/kagi_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION") || KAGI_API_KEY=""
+if [ "\$KAGI_API_KEY" = "populated-out-of-band" ]; then KAGI_API_KEY=""; fi
 
 IMAGE="\$IMAGE_REPO:\$IMAGE_TAG"
 docker pull "\$IMAGE"
@@ -51,6 +54,7 @@ exec docker run --rm --name bot --network host \\
   -e OTEL_EXPORTER_OTLP_INSECURE=true \\
   -e BOT_DISCORD_TOKEN="\$DISCORD_TOKEN" \\
   -e BOT_OPENAI_AUTH_TOKEN="\$OPENAI_TOKEN" \\
+  -e BOT_KAGI_API_KEY="\$KAGI_API_KEY" \\
   "\$IMAGE"
 EOF
 chmod +x /usr/local/bin/start-bot.sh

@@ -75,3 +75,30 @@ func TestLoadBotSettingsRejectsInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadBotSettingsKagiKey(t *testing.T) {
+	t.Setenv("BOT_OPERATOR_CHANNEL_ID", "")
+	t.Setenv("BOT_IMAGE_BASE_URL", "")
+	t.Setenv("BOT_KAGI_API_KEY", "")
+	got, err := loadBotSettings(newSettingsViper())
+	if err != nil || got.KagiAPIKey != "" {
+		t.Fatalf("unset key: (%q, %v), want empty and no error", got.KagiAPIKey, err)
+	}
+
+	t.Setenv("BOT_KAGI_API_KEY", " k-123 \n")
+	got, err = loadBotSettings(newSettingsViper())
+	if err != nil || got.KagiAPIKey != "k-123" {
+		t.Fatalf("set key: (%q, %v), want trimmed k-123", got.KagiAPIKey, err)
+	}
+}
+
+func TestIsSecretSetting(t *testing.T) {
+	for _, k := range []string{"discord_token", "OPENAI_AUTH_TOKEN", "kagi_api_key"} {
+		if !isSecretSetting(k) {
+			t.Errorf("%s should be redacted", k)
+		}
+	}
+	if isSecretSetting("image_base_url") {
+		t.Error("image_base_url is not a secret")
+	}
+}

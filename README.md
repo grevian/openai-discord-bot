@@ -12,6 +12,8 @@ The bot also supports requests to `@Danbot draw me a picture of <something>` whi
 
 ![drawing interactions](https://user-images.githubusercontent.com/603334/230735886-4d869e36-919b-4f1c-8fab-3cfe5e6cf0cc.png)
 
+To get a one-paragraph summary of a web page, send `@Danbot <https link>` on its own, or `@Danbot 📰 <link>` / `@Danbot summarize <link>`. Only `https` links work, and only when the bot has a Kagi API key (`BOT_KAGI_API_KEY`).
+
 ## Running Locally
 
 It's probably easiest to run this via the Dockerfile, just remember to set the 
@@ -37,6 +39,8 @@ These optional variables set the values that are specific to the operator's depl
 | `BOT_IMAGE_BASE_URL` | `https://sillybullshit.click` | `https` origin that archived images are linked from. A trailing slash is removed. No query, fragment or credentials. |
 
 The bot refuses to start if either value is invalid.
+
+`BOT_KAGI_API_KEY` (optional, a secret) is the [Kagi Extract API](https://kagi.com/api/docs) key used for link summaries. Unset means the summarise triggers reply that the feature isn't configured. In production, deploy.yml copies the `KAGI_API_KEY` GitHub secret into the SSM parameter `/openai-discord-bot/prod/kagi_api_key`, which the instance reads when the bot starts.
 
 ## Deployment
 

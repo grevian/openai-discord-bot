@@ -38,6 +38,13 @@ type galleryPublisher interface {
 	Publish(ctx context.Context, s gallery.Submission) error
 }
 
+// linkExtractor turns a page URL into its readable text. *kagiClient
+// satisfies it. It is the seam for per-site extractors (say, Hacker News or
+// Reddit comment threads): wrap or replace it, and the summariser is unchanged.
+type linkExtractor interface {
+	Extract(ctx context.Context, pageURL string) (string, error)
+}
+
 // imageAPI is the subset of the OpenAI image service the bot uses.
 // *openai.ImageService satisfies it.
 type imageAPI interface {
@@ -88,4 +95,5 @@ var (
 	_ imageAPI         = (*openai.ImageService)(nil)
 	_ responsesAPI     = (*responses.ResponseService)(nil)
 	_ discordAPI       = sessionDiscord{}
+	_ linkExtractor    = (*kagiClient)(nil)
 )

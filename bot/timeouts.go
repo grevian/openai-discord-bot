@@ -24,6 +24,9 @@ type timeouts struct {
 	Discord time.Duration
 	// Gallery bounds one gallery publish (a handful of small S3 writes).
 	Gallery time.Duration
+	// LinkExtract bounds one page extraction (a Kagi Extract call). It must
+	// be longer than kagiPageTimeout, the time Kagi is asked to take.
+	LinkExtract time.Duration
 }
 
 func defaultTimeouts() timeouts {
@@ -34,6 +37,7 @@ func defaultTimeouts() timeouts {
 		Storage:     30 * time.Second,
 		Discord:     30 * time.Second,
 		Gallery:     20 * time.Second,
+		LinkExtract: 25 * time.Second,
 	}
 }
 
