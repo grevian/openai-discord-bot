@@ -41,16 +41,6 @@ OPENAI_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/openai_token" --wit
 KAGI_API_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/kagi_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION") || KAGI_API_KEY=""
 if [ "\$KAGI_API_KEY" = "populated-out-of-band" ]; then KAGI_API_KEY=""; fi
 
-# Secrets go to docker through a root-only env file, not -e NAME=value, so
-# they don't show in the docker client's command line (ps, /proc/*/cmdline).
-# docker inspect still shows them, as it does for any container env. /run is
-# tmpfs, so the file never reaches disk; it is rewritten on every start.
-ENV_FILE=/run/danbot/bot.env
-install -d -m 0700 /run/danbot
-(umask 077; printf 'BOT_DISCORD_TOKEN=%s\nBOT_OPENAI_AUTH_TOKEN=%s\nBOT_KAGI_API_KEY=%s\n' \\
-  "\$DISCORD_TOKEN" "\$OPENAI_TOKEN" "\$KAGI_API_KEY" > "\$ENV_FILE.tmp")
-mv -f "\$ENV_FILE.tmp" "\$ENV_FILE"
-
 IMAGE="\$IMAGE_REPO:\$IMAGE_TAG"
 docker pull "\$IMAGE"
 docker rm -f bot 2>/dev/null || true
@@ -62,7 +52,9 @@ exec docker run --rm --name bot --network host --stop-timeout 45 \\
   -e AI_DISCORD_BOT_CONVERSATIONS_NAME="\$CONVERSATIONS_TBL" \\
   -e OTEL_SERVICE_NAME=danbot \\
   -e OTEL_EXPORTER_OTLP_INSECURE=true \\
-  --env-file "\$ENV_FILE" \\
+  -e BOT_DISCORD_TOKEN="\$DISCORD_TOKEN" \\
+  -e BOT_OPENAI_AUTH_TOKEN="\$OPENAI_TOKEN" \\
+  -e BOT_KAGI_API_KEY="\$KAGI_API_KEY" \\
   "\$IMAGE"
 EOF
 chmod +x /usr/local/bin/start-bot.sh

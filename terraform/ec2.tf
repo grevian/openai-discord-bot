@@ -30,15 +30,13 @@ resource "aws_launch_template" "bot" {
     security_groups             = [aws_security_group.instance.id]
   }
 
-  # IMDSv2 only (a plain GET, as an SSRF would send, gets 401), and a token
-  # can't cross a router hop. Hop limit 1 is enough because the bot container
-  # runs with --network host, so its own SDK calls are one hop like the host's
-  # (otel collector, aws cli in start-bot.sh). A container on a bridge network
-  # could not get a token: moving the bot off --network host needs 2 again.
+  # IMDSv2 only (a plain GET, as an SSRF would send, gets 401). Hop limit
+  # stays 2, as on the last instance known to run the bot: 1 (#259) was never
+  # live before the 2026-11-06 outage, so it is reverted until verified.
   metadata_options {
     http_tokens                 = "required"
     http_endpoint               = "enabled"
-    http_put_response_hop_limit = 1
+    http_put_response_hop_limit = 2
   }
 
   user_data = base64encode(templatefile("${path.module}/user-data.sh.tftpl", {
