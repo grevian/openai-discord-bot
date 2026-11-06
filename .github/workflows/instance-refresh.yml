@@ -7,6 +7,11 @@ on:
   workflow_dispatch:
   # Called by terraform.yml when an apply changed the launch template
   workflow_call:
+    secrets:
+      AWS_ROLE_TO_ASSUME:
+        required: true
+
+permissions: {}
 
 env:
   AWS_REGION: ca-central-1
@@ -39,7 +44,7 @@ jobs:
         run: |
           ACTIVE=$(aws autoscaling describe-instance-refreshes \
             --auto-scaling-group-name "$ASG_NAME" \
-            --query "InstanceRefreshes[?Status=='Pending' || Status=='InProgress' || Status=='Cancelling'].InstanceRefreshId" \
+            --query "InstanceRefreshes[?Status=='Pending' || Status=='InProgress' || Status=='Cancelling' || Status=='RollbackInProgress'].InstanceRefreshId" \
             --output text)
           if [ -n "$ACTIVE" ]; then
             echo "::error::An instance refresh is already running ($ACTIVE); not starting another"
@@ -68,12 +73,25 @@ jobs:
           REFRESH_ID: ${{ steps.start.outputs.refresh_id }}
         run: |
           DEADLINE=$((SECONDS + REFRESH_TIMEOUT))
+          FAILS=0
           while true; do
-            read -r STATUS REASON < <(aws autoscaling describe-instance-refreshes \
+            if ! OUT=$(aws autoscaling describe-instance-refreshes \
               --auto-scaling-group-name "$ASG_NAME" \
               --instance-refresh-ids "$REFRESH_ID" \
               --query "InstanceRefreshes[0].[Status, StatusReason || '-']" \
-              --output text)
+              --output text); then
+              # A transient API error must not fail the job: AWS keeps refreshing
+              FAILS=$((FAILS + 1))
+              echo "::warning::could not read refresh status ($FAILS/5)"
+              if [ "$FAILS" -ge 5 ]; then
+                echo "::error::could not read the status of refresh $REFRESH_ID; it may still be running in AWS"
+                exit 1
+              fi
+              sleep 20
+              continue
+            fi
+            FAILS=0
+            read -r STATUS REASON <<< "$OUT"
             echo "Status: $STATUS"
             case "$STATUS" in
               Successful)

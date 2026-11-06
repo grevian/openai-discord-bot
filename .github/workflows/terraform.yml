@@ -48,11 +48,16 @@ jobs:
           terraform plan -out=tfplan
           # The ASG follows the launch template's $Latest version, so a change
           # to it (new user-data, AMI, ...) only reaches the instance via a refresh.
-          CHANGED=$(terraform show -json tfplan | jq -r '
+          terraform show -json tfplan > plan.json
+          CHANGED=$(jq -r '
             [.resource_changes[]?
               | select(.type == "aws_launch_template" and .name == "bot")
               | select(.change.actions | any(. == "create" or . == "update" or . == "delete"))]
-            | length > 0')
+            | length > 0' plan.json)
+          if [ "$CHANGED" != "true" ] && [ "$CHANGED" != "false" ]; then
+            echo "::error::could not tell whether the launch template changed (got '$CHANGED')"
+            exit 1
+          fi
           echo "Launch template changed: $CHANGED"
           echo "launch-template-changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
@@ -65,7 +70,8 @@ jobs:
     needs: terraform
     if: ${{ inputs.refresh-instance && needs.terraform.outputs.launch-template-changed == 'true' }}
     uses: ./.github/workflows/instance-refresh.yml
-    secrets: inherit
+    secrets:
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
     permissions:
       id-token: write
       contents: read
