@@ -63,6 +63,9 @@ type AIBot struct {
 	// links extracts page text for link summaries. Nil means summaries are
 	// not configured.
 	links linkExtractor
+	// linkExamples are in-character reactions to example pages, sent before
+	// a link summary request to show the voice wanted.
+	linkExamples []linkExample
 	// galleryWG tracks in-flight gallery publishes.
 	galleryWG sync.WaitGroup
 
@@ -86,6 +89,7 @@ type promptFile struct {
 	Instructions        string                        `json:"instructions"`
 	DrawingInstructions string                        `json:"drawing_instructions"`
 	Examples            []storage.ConversationMessage `json:"examples"`
+	LinkExamples        []linkExample                 `json:"link_examples"`
 }
 
 // loadPromptFile reads and parses the bot's prompt file.
@@ -131,6 +135,7 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 		systemInstructions:  prompt.Instructions,
 		drawingInstructions: prompt.DrawingInstructions,
 		basePrompt:          prompt.Examples,
+		linkExamples:        prompt.LinkExamples,
 		storage:             threadStorage,
 		imageStorage:        imageStorage,
 		timeouts:            defaultTimeouts(),

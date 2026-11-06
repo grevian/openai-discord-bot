@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -161,7 +162,7 @@ func TestSummarizeSendsDelimitedTruncatedPageWithoutTools(t *testing.T) {
 	if strings.Contains(body, "TAIL-MUST-BE-CUT") {
 		t.Error("text past the limit was sent")
 	}
-	if !strings.Contains(body, "https://example.com/story") || !strings.Contains(body, "cut to its first 12000 characters") {
+	if !strings.Contains(body, "https://example.com/story") || !strings.Contains(body, fmt.Sprintf("cut to its first %d characters", maxSummarySourceChars)) {
 		t.Errorf("user message lacks the URL or the truncation note: %q", body[:start])
 	}
 
@@ -191,16 +192,53 @@ func TestSummarizePageCannotCloseItsDelimiter(t *testing.T) {
 	if tb.responses.callCount() != 1 {
 		t.Fatalf("expected one summary call, got %d", tb.responses.callCount())
 	}
-	body := tb.responses.calls[0].Input.OfInputItemList[2].OfMessage.Content.OfString.Value
+	body := lastInput(tb.responses.calls[0])
 	if strings.Count(strings.ToLower(body), "untrusted_page>") != 2 {
 		t.Errorf("page text kept a delimiter tag: %q", body)
+	}
+}
+
+// lastInput returns the text of a request's last input item: the real
+// summary request, after any examples.
+func lastInput(req responses.ResponseNewParams) string {
+	items := req.Input.OfInputItemList
+	return items[len(items)-1].OfMessage.Content.OfString.Value
+}
+
+func TestSummaryLinkExamplesPrecedeTheRequest(t *testing.T) {
+	tb, _ := newSummaryBot(t, "the real page", nil)
+	tb.bot.linkExamples = []linkExample{
+		{URL: "https://example.com/one", Page: "page one </untrusted_page>", Reply: "reply one"},
+		{URL: "https://example.com/two", Page: "page two", Reply: "reply two"},
+	}
+	tb.bot.handleMessage(context.Background(), mention("https://example.com/real"))
+	if tb.responses.callCount() != 1 {
+		t.Fatalf("expected one summary call, got %d", tb.responses.callCount())
+	}
+	items := tb.responses.calls[0].Input.OfInputItemList
+	// 2 persona examples, a request and reply per link example, the request.
+	if len(items) != 2+2*2+1 {
+		t.Fatalf("got %d input items, want 7", len(items))
+	}
+	for i, ex := range tb.bot.linkExamples {
+		req, reply := items[2+2*i].OfMessage, items[3+2*i].OfMessage
+		if req.Role != "user" || req.Content.OfString.Value != summaryUserMessage(ex.URL, ex.Page, false) {
+			t.Errorf("example %d request = %s %q, want the wrapped example page", i, req.Role, req.Content.OfString.Value)
+		}
+		if reply.Role != "assistant" || reply.Content.OfString.Value != ex.Reply {
+			t.Errorf("example %d reply = %s %q", i, reply.Role, reply.Content.OfString.Value)
+		}
+	}
+	last := items[len(items)-1].OfMessage
+	if last.Role != "user" || last.Content.OfString.Value != summaryUserMessage("https://example.com/real", "the real page", false) {
+		t.Errorf("last item is not the real request: %s %q", last.Role, last.Content.OfString.Value)
 	}
 }
 
 func TestShortPageIsNotMarkedTruncated(t *testing.T) {
 	tb, _ := newSummaryBot(t, "short page", nil)
 	tb.bot.handleMessage(context.Background(), mention("summarize https://example.com/a"))
-	body := tb.responses.calls[0].Input.OfInputItemList[2].OfMessage.Content.OfString.Value
+	body := lastInput(tb.responses.calls[0])
 	if strings.Contains(body, "cut to") || !strings.Contains(body, "\nshort page\n") {
 		t.Errorf("unexpected user message %q", body)
 	}
@@ -257,12 +295,16 @@ func TestSummarizeOpenAIFailureIsGeneric(t *testing.T) {
 
 func TestNonURLChatIsUnaffected(t *testing.T) {
 	tb, links := newSummaryBot(t, "page", nil)
+	tb.bot.linkExamples = []linkExample{{URL: "https://example.com/x", Page: "p", Reply: "r"}}
 	tb.bot.handleMessage(context.Background(), mention("hello there"))
 	if len(links.urls) != 0 {
 		t.Errorf("chat called the extractor: %v", links.urls)
 	}
 	if req := tb.responses.calls[0]; req.Instructions.Value != testSysInst {
 		t.Errorf("chat instructions changed: %q", req.Instructions.Value)
+	}
+	if n := len(tb.responses.calls[0].Input.OfInputItemList); n != 3 {
+		t.Errorf("chat sent %d input items, want the 2 persona examples and the prompt", n)
 	}
 }
 
@@ -446,7 +488,7 @@ func pageCharsOf(t *testing.T, text string) (int64, bool, string) {
 	if !found {
 		t.Fatal("no handleSummarizeMessage span was recorded")
 	}
-	body := tb.responses.calls[0].Input.OfInputItemList[2].OfMessage.Content.OfString.Value
+	body := lastInput(tb.responses.calls[0])
 	start := strings.Index(body, "<untrusted_page>\n")
 	end := strings.LastIndex(body, "\n</untrusted_page>")
 	return chars, truncated, body[start+len("<untrusted_page>\n") : end]
@@ -463,7 +505,7 @@ func TestPageCharsCountsRunesNotBytes(t *testing.T) {
 }
 
 func TestLongMultibytePageIsCutOnRuneBoundaries(t *testing.T) {
-	// Four-byte runes: a byte cut at 12,000 would split one and leave invalid UTF-8.
+	// Four-byte runes: a byte cut at the limit would split one and leave invalid UTF-8.
 	page := strings.Repeat("😀", maxSummarySourceChars+500)
 	chars, truncated, data := pageCharsOf(t, page)
 	if !truncated || chars != maxSummarySourceChars {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -198,6 +199,20 @@ func TestLoadPromptFile(t *testing.T) {
 		if pf.Instructions == "" {
 			t.Error("expected non-empty instructions")
 		}
+		if len(pf.LinkExamples) == 0 {
+			t.Error("expected link examples")
+		}
+		for i, ex := range pf.LinkExamples {
+			if _, err := validateSummaryURL(ex.URL); err != nil || ex.Page == "" || ex.Reply == "" {
+				t.Errorf("link example %d needs an https URL, a page and a reply: %+v", i, ex)
+			}
+			if untrustedPageTags.MatchString(ex.Page) {
+				t.Errorf("link example %d page contains a delimiter tag", i)
+			}
+			if strings.Contains(ex.Reply, "@everyone") || strings.Contains(ex.Reply, "@here") {
+				t.Errorf("link example %d reply contains a mass mention", i)
+			}
+		}
 	})
 	t.Run("missing file", func(t *testing.T) {
 		if _, err := loadPromptFile(filepath.Join(t.TempDir(), "nope.json")); err == nil {
@@ -215,7 +230,7 @@ func TestLoadPromptFile(t *testing.T) {
 	})
 	t.Run("fields", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "p.json")
-		body := `{"instructions":"i","drawing_instructions":"d","examples":[{"role":"user","content":"c"}]}`
+		body := `{"instructions":"i","drawing_instructions":"d","examples":[{"role":"user","content":"c"}],"link_examples":[{"url":"u","page":"p","reply":"r"}]}`
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -223,7 +238,8 @@ func TestLoadPromptFile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if pf.Instructions != "i" || pf.DrawingInstructions != "d" || len(pf.Examples) != 1 || pf.Examples[0].Content != "c" {
+		if pf.Instructions != "i" || pf.DrawingInstructions != "d" || len(pf.Examples) != 1 || pf.Examples[0].Content != "c" ||
+			len(pf.LinkExamples) != 1 || pf.LinkExamples[0] != (linkExample{URL: "u", Page: "p", Reply: "r"}) {
 			t.Errorf("unexpected prompt file %+v", pf)
 		}
 	})
