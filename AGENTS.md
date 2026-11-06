@@ -10,8 +10,6 @@ When a trigger, syntax or limit changes (`classifyMessage`, `maxEditSourceBytes`
 2. the `@Danbot help` reply (`bot/help.go`)
 3. `gallery/site/help.html` (also served at `/help/`)
 
-`TestDocsMentionEveryTrigger` (bot/help_test.go) fails if one of them forgets a trigger; add new triggers to its list.
-
 ## Checks
 
 `go test -race ./...`, `golangci-lint run` (v2.15.0), `govulncheck ./...`.
