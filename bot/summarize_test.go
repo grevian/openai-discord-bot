@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -162,7 +161,7 @@ func TestSummarizeSendsDelimitedTruncatedPageWithoutTools(t *testing.T) {
 	if strings.Contains(body, "TAIL-MUST-BE-CUT") {
 		t.Error("text past the limit was sent")
 	}
-	if !strings.Contains(body, "https://example.com/story") || !strings.Contains(body, fmt.Sprintf("cut to its first %d characters", maxSummarySourceChars)) {
+	if !strings.Contains(body, "https://example.com/story") || body != summaryUserMessage("https://example.com/story", data, true) || body == summaryUserMessage("https://example.com/story", data, false) {
 		t.Errorf("user message lacks the URL or the truncation note: %q", body[:start])
 	}
 

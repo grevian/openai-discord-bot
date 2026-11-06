@@ -209,8 +209,8 @@ func TestLoadPromptFile(t *testing.T) {
 			if untrustedPageTags.MatchString(ex.Page) {
 				t.Errorf("link example %d page contains a delimiter tag", i)
 			}
-			if strings.Contains(ex.Reply, "@everyone") || strings.Contains(ex.Reply, "@here") {
-				t.Errorf("link example %d reply contains a mass mention", i)
+			if strings.Contains(ex.Reply, "@") {
+				t.Errorf("link example %d reply contains a mention", i)
 			}
 		}
 	})
