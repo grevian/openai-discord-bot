@@ -12,7 +12,7 @@ Every request starts with an `@Danbot` mention. Say `@Danbot help` on its own fo
 | `🧵` anywhere in the message | The reply goes in a new thread (60 minute auto-archive) which keeps context between messages; you still have to `@Danbot` inside the thread |
 | `@Danbot 🎨 <idea>` or `@Danbot draw me a picture of <idea>` | An AI-generated crayon stick-figure drawing, 1024x1024 |
 | `@Danbot ✏️ <change>`, `edit: <change>` or `redraw <change>`, with an image attached (or as a reply to one of the bot's own drawings) | An edited version of that image, 1024x1024 |
-| `@Danbot <https link>` on its own, `@Danbot 📰 <link>` or `@Danbot summarize <link>` | A one-paragraph summary of the page in Danbot's voice (needs `BOT_KAGI_API_KEY`) |
+| `@Danbot <https link>` on its own, `@Danbot 📰 <link>` or `@Danbot summarize <link>` | A one-paragraph reaction to the page in Danbot's voice, more mood than detail (needs `BOT_KAGI_API_KEY`) |
 | `@Danbot help` (the whole message) | A static help reply, no model call |
 
 Notes:
@@ -20,7 +20,7 @@ Notes:
 - Draw triggers match anywhere in the message, case-insensitively; edit triggers (with an image) likewise. With an image, edit beats draw, which beats chat. Without one, a message that starts with an edit trigger gets the "need an image" reply (unless it also draws).
 - The image to edit must be png, jpeg or webp and under 50MB. Without an image, an edit request gets a short reply saying one is needed.
 - Generated images are archived and, when the gallery is enabled, shown in the [gallery](https://sillybullshit.click/gallery/) (newest 48).
-- Link summaries take `https` links only. The page is read by the Kagi Extract API, and only its first 12,000 characters are summarised. A link inside an ordinary chat message (`@Danbot is <link> any good?`) is just chat. Draw and edit beat summarise.
+- Link summaries take `https` links only. The page is read by the Kagi Extract API, and only its first 4,000 characters are sent to the model. A link inside an ordinary chat message (`@Danbot is <link> any good?`) is just chat. Draw and edit beat summarise.
 - Slash commands are not supported yet.
 
 ![conversational interactions](https://user-images.githubusercontent.com/603334/230736019-528a4a65-f787-4a16-918f-43c2f0203ddd.png)
