@@ -222,8 +222,8 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 		t.Fatalf("expected one Generate call, got %d", len(tb.images.generated))
 	}
 	req := tb.images.generated[0]
-	if req.Model != "gpt-image-2" {
-		t.Errorf("model = %q, want gpt-image-2", req.Model)
+	if req.Model != "gpt-image-2.6-flare" {
+		t.Errorf("model = %q, want gpt-image-2.6-flare", req.Model)
 	}
 	if !strings.HasPrefix(req.Prompt, testDrawing+" ") || !strings.HasSuffix(req.Prompt, " a cat") {
 		t.Errorf("prompt = %q", req.Prompt)
@@ -318,8 +318,8 @@ func TestEditUsesAttachment(t *testing.T) {
 		t.Fatalf("expected one Edit call, got %d", len(tb.images.edited))
 	}
 	req := tb.images.edited[0]
-	if req.Model != "gpt-image-2" {
-		t.Errorf("model = %q, want gpt-image-2", req.Model)
+	if req.Model != "gpt-image-2.6-flare" {
+		t.Errorf("model = %q, want gpt-image-2.6-flare", req.Model)
 	}
 	if req.Prompt != testDrawing+" add a hat" {
 		t.Errorf("prompt = %q", req.Prompt)

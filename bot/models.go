@@ -13,8 +13,9 @@ const (
 	chatModel           = shared.ChatModelGPT6Luna
 	chatReasoningEffort = shared.ReasoningEffortLow
 
-	// imageGenerateModel draws pictures for "draw me ..." requests.
-	imageGenerateModel = openai.ImageModelGPTImage2
+	// imageGenerateModel draws pictures for "draw me ..." requests. openai-go
+	// v3.91.1 has no constant for the 2.6 Flare model, so it is named directly.
+	imageGenerateModel = openai.ImageModel("gpt-image-2.6-flare")
 	// imageEditModel edits an attached image for "edit: ..." requests.
-	imageEditModel = openai.ImageModelGPTImage2
+	imageEditModel = openai.ImageModel("gpt-image-2.6-flare")
 )

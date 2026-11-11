@@ -189,8 +189,8 @@ const (
 )
 
 // maxEditSourceBytes is the size at which a source image is refused for an
-// edit. openai-go documents the GPT image models (gpt-image-1, used for edits
-// here) as taking a png, webp or jpg "less than 50MB" per image, so a source of
+// edit. openai-go documents the GPT image models (the ones edits here use)
+// as taking a png, webp or jpg "less than 50MB" per image, so a source of
 // this many bytes or more is too large. Sized images are checked against it,
 // and bodies are read through a limit of the same size.
 const maxEditSourceBytes = 50_000_000
