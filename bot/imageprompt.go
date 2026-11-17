@@ -1,6 +1,9 @@
 package bot
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // buildDrawPrompt puts the user's scene first, followed by the labelled style
 // block (style, mood, exclusions) from the persona file.
@@ -17,7 +20,7 @@ func buildDrawPrompt(scene, styleBlock string) string {
 // edit stays narrow; the keep list only names what must be preserved.
 func buildEditPrompt(change, keepList string) string {
 	p := "Edit the input image. Change only: " + strings.TrimSpace(change)
-	if !strings.HasSuffix(p, ".") {
+	if r, _ := utf8.DecodeLastRuneInString(p); !strings.ContainsRune(".?!", r) {
 		p += "."
 	}
 	if keepList != "" {
