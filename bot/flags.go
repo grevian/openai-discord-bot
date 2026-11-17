@@ -9,11 +9,12 @@ import (
 // is missing or unreachable. Change values by DM (see flagcmd.go).
 var flagRegistry = flags.NewRegistry()
 
-// EditThreadContext includes the thread's conversation in image edit
-// prompts: a text model condenses the earlier messages into a few directives
-// (see editcontext.go). The check is in handleImageEditMessage.
+// EditThreadContext includes the thread's conversation, or outside a thread
+// the reply chain's earlier requests, in image edit prompts: a text model
+// condenses them into a few directives (see editcontext.go). The check is in
+// handleImageEditMessage.
 var EditThreadContext = flagRegistry.Bool("edit_thread_context", false,
-	"include thread conversation context in image edit prompts")
+	"include thread or reply-chain context in image edit prompts")
 
 // NewFlags returns the flag cache for the bot's registry over backend. A nil
 // backend means defaults only.
