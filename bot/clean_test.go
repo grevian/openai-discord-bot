@@ -85,6 +85,8 @@ func TestDefaultEditUnchangedAndUnmarked(t *testing.T) {
 
 	if p := tb.images.edited[0].Prompt; !strings.Contains(p, testEditKeep) {
 		t.Errorf("default edit lost its keep list: %q", p)
+	} else if !strings.Contains(p, testDrawing) {
+		t.Errorf("default edit lost the danbot style block: %q", p)
 	}
 	if sent := tb.discord.sentMessages(); len(sent) != 1 || hasCleanEmoji(sent[0].Content) {
 		t.Errorf("a default edit must not be marked clean: %+v", sent)
@@ -122,6 +124,9 @@ func TestCleanEditStillUsesThreadContext(t *testing.T) {
 	}
 	if strings.Contains(p, testEditKeep) {
 		t.Errorf("clean edit must not carry the keep list: %q", p)
+	}
+	if strings.Contains(p, testDrawing) {
+		t.Errorf("clean edit must not carry the style block: %q", p)
 	}
 }
 

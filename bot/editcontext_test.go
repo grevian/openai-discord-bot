@@ -68,7 +68,7 @@ func TestEditFlagOffMakesNoCondenseCallAndKeepsPrompt(t *testing.T) {
 	if len(tb.images.edited) != 1 {
 		t.Fatalf("expected one Edit call, got %d", len(tb.images.edited))
 	}
-	if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a hat", testEditKeep); got != want {
+	if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a hat", editGuidance(testDrawing, testEditKeep)); got != want {
 		t.Errorf("flag off prompt = %q, want today's %q", got, want)
 	}
 }
@@ -151,7 +151,7 @@ func TestEditFlagOnFallsBackWhenCondenseGivesNothingUsable(t *testing.T) {
 			if len(tb.images.edited) != 1 {
 				t.Fatalf("the edit must still run, got %d Edit calls", len(tb.images.edited))
 			}
-			if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a dog", testEditKeep); got != want {
+			if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a dog", editGuidance(testDrawing, testEditKeep)); got != want {
 				t.Errorf("fallback prompt = %q, want %q", got, want)
 			}
 			sent := tb.discord.sentMessages()
@@ -178,7 +178,7 @@ func TestEditFlagOnFallsBackOnCondenseTimeout(t *testing.T) {
 	if len(tb.images.edited) != 1 {
 		t.Fatalf("the edit must still run, got %d Edit calls", len(tb.images.edited))
 	}
-	if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a dog", testEditKeep); got != want {
+	if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a dog", editGuidance(testDrawing, testEditKeep)); got != want {
 		t.Errorf("fallback prompt = %q, want %q", got, want)
 	}
 }
@@ -212,7 +212,7 @@ func TestEditFlagOnWithoutThreadHistoryMakesNoCondenseCall(t *testing.T) {
 			if tb.responses.callCount() != 0 {
 				t.Errorf("nothing to condense, got %d calls", tb.responses.callCount())
 			}
-			if len(tb.images.edited) != 1 || tb.images.edited[0].Prompt != buildEditPrompt("add a dog", testEditKeep) {
+			if len(tb.images.edited) != 1 || tb.images.edited[0].Prompt != buildEditPrompt("add a dog", editGuidance(testDrawing, testEditKeep)) {
 				t.Errorf("unexpected edit calls %+v", tb.images.edited)
 			}
 		})
@@ -226,7 +226,7 @@ func TestEditFlagOnOutsideThreadMakesNoCondenseCall(t *testing.T) {
 	if tb.responses.callCount() != 0 {
 		t.Errorf("a plain channel has no thread context, got %d calls", tb.responses.callCount())
 	}
-	if len(tb.images.edited) != 1 || tb.images.edited[0].Prompt != buildEditPrompt("add a dog", testEditKeep) {
+	if len(tb.images.edited) != 1 || tb.images.edited[0].Prompt != buildEditPrompt("add a dog", editGuidance(testDrawing, testEditKeep)) {
 		t.Errorf("unexpected edit calls %+v", tb.images.edited)
 	}
 }
@@ -364,5 +364,29 @@ func TestBuildEditPromptWithDirectives(t *testing.T) {
 	}
 	if len([]rune(got)) > maxEditPromptChars {
 		t.Errorf("prompt over the %d cap", maxEditPromptChars)
+	}
+}
+
+// A realistic style block (~865 runes, like drawing_instructions) plus keep
+// list leaves little room: directives that don't fit are dropped, never
+// truncating the guidance, and the prompt stays within the cap.
+func TestBuildEditPromptWithDirectivesRealisticStyleBlock(t *testing.T) {
+	guidance := editGuidance(strings.Repeat("s", 865), "KEEP")
+	plain := buildEditPrompt("add a hat", guidance)
+
+	// One directive that fits, then one too big for the remaining budget.
+	fits := strings.Repeat("a", 100)
+	huge := strings.Repeat("b", maxEditPromptChars)
+	got := buildEditPromptWithContext("add a hat", []string{fits, huge}, guidance)
+	if !strings.Contains(got, fits) || strings.Contains(got, huge) {
+		t.Errorf("expected only the directive that fits to be kept, got %d runes", len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, guidance) || len([]rune(got)) > maxEditPromptChars {
+		t.Errorf("guidance must stay whole and the prompt under the cap, got %d runes", len([]rune(got)))
+	}
+
+	// Nothing fits: fall back to exactly the plain prompt.
+	if got := buildEditPromptWithContext("add a hat", []string{huge}, guidance); got != plain {
+		t.Errorf("no directive fits, want the plain prompt, got %d runes", len([]rune(got)))
 	}
 }

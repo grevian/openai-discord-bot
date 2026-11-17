@@ -329,8 +329,8 @@ func TestEditUsesAttachment(t *testing.T) {
 	if !found || !strings.Contains(change, "add a hat") || keep != "" {
 		t.Errorf("the change should come before the keep list, prompt = %q", req.Prompt)
 	}
-	if strings.Contains(req.Prompt, testDrawing) {
-		t.Errorf("edit prompt must not reuse the drawing style block: %q", req.Prompt)
+	if !strings.Contains(change, testDrawing) || strings.Index(change, "add a hat") > strings.Index(change, testDrawing) {
+		t.Errorf("edit prompt should carry the style block after the change: %q", req.Prompt)
 	}
 	body, err := io.ReadAll(req.Image.OfFile)
 	if err != nil || !bytes.Equal(body, pngBytes) {
