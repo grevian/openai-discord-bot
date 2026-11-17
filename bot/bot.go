@@ -56,6 +56,7 @@ type AIBot struct {
 	discord             discordAPI
 	systemInstructions  string
 	drawingInstructions string
+	editInstructions    string
 	basePrompt          []storage.ConversationMessage
 	storage             threadStore
 	imageStorage        imageStore
@@ -97,6 +98,7 @@ type AIBot struct {
 type promptFile struct {
 	Instructions        string                        `json:"instructions"`
 	DrawingInstructions string                        `json:"drawing_instructions"`
+	EditInstructions    string                        `json:"edit_instructions"`
 	Examples            []storage.ConversationMessage `json:"examples"`
 	LinkExamples        []linkExample                 `json:"link_examples"`
 }
@@ -143,6 +145,7 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 		shutdown:            shutdown,
 		systemInstructions:  prompt.Instructions,
 		drawingInstructions: prompt.DrawingInstructions,
+		editInstructions:    prompt.EditInstructions,
 		basePrompt:          prompt.Examples,
 		linkExamples:        prompt.LinkExamples,
 		storage:             threadStorage,
@@ -513,12 +516,9 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return fmt.Errorf("failed to record drawing prompt: %w", err)
 	}
 
-	// Prepend the drawing system instructions so every generated image carries
-	// the danbot art style, even though the image API has no system-prompt slot.
-	fullPrompt := prompt
-	if b.drawingInstructions != "" {
-		fullPrompt = b.drawingInstructions + " " + prompt
-	}
+	// The image API has no system-prompt slot, so the scene and the danbot
+	// art style share one prompt (scene first, then the style block).
+	fullPrompt := buildDrawPrompt(prompt, b.drawingInstructions)
 
 	// Request the image(s) from openAI
 	imageRequest := openai.ImageGenerateParams{
@@ -703,10 +703,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		return newUserError("That image isn't a supported format. Please use png, jpeg or webp. Nothing else ever works out for me anyway.", fmt.Errorf("source image is not a supported format (png/jpeg/webp)"))
 	}
 
-	fullPrompt := prompt
-	if b.drawingInstructions != "" {
-		fullPrompt = b.drawingInstructions + " " + prompt
-	}
+	fullPrompt := buildEditPrompt(prompt, b.editInstructions)
 
 	// The OpenAI multipart encoder needs a recognizable filename + content type;
 	// without it the form part is sent as application/octet-stream and the Edit

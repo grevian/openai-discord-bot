@@ -27,13 +27,14 @@ func TestMain(m *testing.M) {
 }
 
 const (
-	botID       = "bot-1"
-	userID      = "user-1"
-	channelID   = "chan-1"
-	guildID     = "guild-1"
-	threadID    = "thread-1"
-	testSysInst = "you are danbo"
-	testDrawing = "in the danbo style:"
+	botID        = "bot-1"
+	userID       = "user-1"
+	channelID    = "chan-1"
+	guildID      = "guild-1"
+	threadID     = "thread-1"
+	testSysInst  = "you are danbo"
+	testDrawing  = "STYLE-BLOCK-MARKER"
+	testEditKeep = "KEEP-LIST-MARKER"
 	// Operator settings deliberately differ from the production defaults so
 	// the tests fail if the bot ignores its configuration.
 	testOperatorChannel = "operator-chan-1"
@@ -480,6 +481,7 @@ func newTestBot(t *testing.T) *testBot {
 		discord:             tb.discord,
 		systemInstructions:  testSysInst,
 		drawingInstructions: testDrawing,
+		editInstructions:    testEditKeep,
 		basePrompt: []storage.ConversationMessage{
 			{Role: "user", Content: "example question"},
 			{Role: "assistant", Content: "example answer"},

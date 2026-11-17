@@ -225,8 +225,12 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 	if req.Model != "gpt-image-2.6-flare" {
 		t.Errorf("model = %q, want gpt-image-2.6-flare", req.Model)
 	}
-	if !strings.HasPrefix(req.Prompt, testDrawing+" ") || !strings.HasSuffix(req.Prompt, " a cat") {
-		t.Errorf("prompt = %q", req.Prompt)
+	scene, style, found := strings.Cut(req.Prompt, "\n"+testDrawing)
+	if !found || !strings.Contains(scene, "a cat") || strings.Contains(scene, testDrawing) {
+		t.Errorf("the scene should come before the style block, prompt = %q", req.Prompt)
+	}
+	if style != "" {
+		t.Errorf("the style block should end the prompt, trailing = %q", style)
 	}
 	if req.SafetyIdentifier.Value != userID {
 		t.Errorf("safety identifier = %q", req.SafetyIdentifier.Value)
@@ -249,7 +253,7 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 	}
 
 	want := []storedMessage{
-		{channelID, "alice (user-1) on guild-1", req.Prompt[len(testDrawing)+1:]},
+		{channelID, "alice (user-1) on guild-1", "a cat"},
 		{channelID, "Bot", testImageBaseURL + "/guild-1/image-1"},
 	}
 	if got := tb.threads.addedMessages(); !equalStored(got, want) {
@@ -321,8 +325,12 @@ func TestEditUsesAttachment(t *testing.T) {
 	if req.Model != "gpt-image-2.6-flare" {
 		t.Errorf("model = %q, want gpt-image-2.6-flare", req.Model)
 	}
-	if req.Prompt != testDrawing+" add a hat" {
-		t.Errorf("prompt = %q", req.Prompt)
+	change, keep, found := strings.Cut(req.Prompt, "\n"+testEditKeep)
+	if !found || !strings.Contains(change, "add a hat") || keep != "" {
+		t.Errorf("the change should come before the keep list, prompt = %q", req.Prompt)
+	}
+	if strings.Contains(req.Prompt, testDrawing) {
+		t.Errorf("edit prompt must not reuse the drawing style block: %q", req.Prompt)
 	}
 	body, err := io.ReadAll(req.Image.OfFile)
 	if err != nil || !bytes.Equal(body, pngBytes) {

@@ -244,3 +244,27 @@ func TestLoadPromptFile(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildDrawPrompt(t *testing.T) {
+	got := buildDrawPrompt("a cat", "STYLE")
+	scene, style, ok := strings.Cut(got, "\nSTYLE")
+	if !ok || style != "" || !strings.Contains(scene, "a cat") {
+		t.Errorf("scene should lead and style should follow: %q", got)
+	}
+	if got := buildDrawPrompt("a cat", ""); strings.Contains(got, "\n") {
+		t.Errorf("no style block, expected a single line: %q", got)
+	}
+}
+
+func TestBuildEditPrompt(t *testing.T) {
+	got := buildEditPrompt("add a hat", "KEEP")
+	change, keep, ok := strings.Cut(got, "\nKEEP")
+	if !ok || keep != "" || !strings.Contains(change, "add a hat") {
+		t.Errorf("change should precede the keep list: %q", got)
+	}
+	for _, in := range []string{"add a hat.", "add a hat?", "add a hat!"} {
+		if got := buildEditPrompt(in, ""); !strings.HasSuffix(got, in) || strings.Contains(got, "\n") {
+			t.Errorf("%q: unexpected shape %q", in, got)
+		}
+	}
+}
