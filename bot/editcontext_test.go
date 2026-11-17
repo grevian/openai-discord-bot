@@ -366,3 +366,27 @@ func TestBuildEditPromptWithDirectives(t *testing.T) {
 		t.Errorf("prompt over the %d cap", maxEditPromptChars)
 	}
 }
+
+// A realistic style block (~865 runes, like drawing_instructions) plus keep
+// list leaves little room: directives that don't fit are dropped, never
+// truncating the guidance, and the prompt stays within the cap.
+func TestBuildEditPromptWithDirectivesRealisticStyleBlock(t *testing.T) {
+	guidance := editGuidance(strings.Repeat("s", 865), "KEEP")
+	plain := buildEditPrompt("add a hat", guidance)
+
+	// One directive that fits, then one too big for the remaining budget.
+	fits := strings.Repeat("a", 100)
+	huge := strings.Repeat("b", maxEditPromptChars)
+	got := buildEditPromptWithContext("add a hat", []string{fits, huge}, guidance)
+	if !strings.Contains(got, fits) || strings.Contains(got, huge) {
+		t.Errorf("expected only the directive that fits to be kept, got %d runes", len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, guidance) || len([]rune(got)) > maxEditPromptChars {
+		t.Errorf("guidance must stay whole and the prompt under the cap, got %d runes", len([]rune(got)))
+	}
+
+	// Nothing fits: fall back to exactly the plain prompt.
+	if got := buildEditPromptWithContext("add a hat", []string{huge}, guidance); got != plain {
+		t.Errorf("no directive fits, want the plain prompt, got %d runes", len([]rune(got)))
+	}
+}
