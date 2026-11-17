@@ -124,3 +124,75 @@ func TestCleanEditStillUsesThreadContext(t *testing.T) {
 		t.Errorf("clean edit must not carry the keep list: %q", p)
 	}
 }
+
+func TestStripCleanEmoji(t *testing.T) {
+	for in, want := range map[string]string{
+		"a " + cleanEmoji + " cat": "a cat",
+		cleanEmoji + " a cat":      "a cat",
+		"a cat " + cleanEmoji:      "a cat",
+		"a  cat":                   "a  cat",
+	} {
+		if got := stripCleanEmoji(in); got != want {
+			t.Errorf("stripCleanEmoji(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCleanEditPromptLengthFallback(t *testing.T) {
+	change := "add a hat"
+	short := []string{"one", "two"}
+	if got := buildCleanEditPromptWithContext(change, short); !strings.HasPrefix(got, change) || !strings.Contains(got, "two") {
+		t.Errorf("short directives should all fit: %q", got)
+	}
+	// The second directive would take the prompt past the limit, so only the
+	// first is kept.
+	long := []string{"one", strings.Repeat("x", maxEditPromptChars)}
+	got := buildCleanEditPromptWithContext(change, long)
+	if !strings.Contains(got, "one") || strings.Contains(got, "xxx") {
+		t.Errorf("over-long directive should be dropped: %.80q", got)
+	}
+	// Nothing fits: the plain change.
+	if got := buildCleanEditPromptWithContext(change, []string{strings.Repeat("x", maxEditPromptChars)}); got != change {
+		t.Errorf("want the plain change, got %.80q", got)
+	}
+	if got := buildCleanEditPromptWithContext(change, nil); got != change {
+		t.Errorf("no directives should give the change, got %q", got)
+	}
+}
+
+func TestEditStaysDefaultWhenNotCleanSource(t *testing.T) {
+	for name, author := range map[string]string{"unmarked bot drawing": "", "marked message from a user": "user-2"} {
+		t.Run(name, func(t *testing.T) {
+			tb := editThreadBot(t, false, nil)
+			content := "here ya go"
+			if author != "" {
+				content = cleanEmoji + " look"
+			}
+			if author == "" {
+				author = tb.discord.BotUser().ID
+			}
+			m := mention("edit: add a hat")
+			m.ReferencedMessage = &discordgo.Message{
+				Author:      &discordgo.User{ID: author},
+				Content:     content,
+				Attachments: []*discordgo.MessageAttachment{{URL: editSrcURL, Filename: "source.png"}},
+			}
+			if author != tb.discord.BotUser().ID {
+				// Not the bot's message: the image comes from an attachment.
+				m.ReferencedMessage = nil
+				m.Attachments = []*discordgo.MessageAttachment{{URL: editSrcURL, Filename: "source.png"}}
+				m.ReferencedMessage = &discordgo.Message{Author: &discordgo.User{ID: author}, Content: content}
+			}
+			tb.bot.handleMessage(context.Background(), m)
+			if len(tb.images.edited) != 1 {
+				t.Fatalf("expected one Edit call, got %d", len(tb.images.edited))
+			}
+			if p := tb.images.edited[0].Prompt; !strings.Contains(p, testEditKeep) {
+				t.Errorf("edit should stay default, got %q", p)
+			}
+			if sent := tb.discord.sentMessages(); len(sent) != 1 || hasCleanEmoji(sent[0].Content) {
+				t.Errorf("reply must not be marked clean: %+v", sent)
+			}
+		})
+	}
+}

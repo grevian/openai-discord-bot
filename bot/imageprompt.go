@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -36,8 +37,12 @@ const cleanEmoji = "🫧"
 
 func hasCleanEmoji(s string) bool { return strings.Contains(s, cleanEmoji) }
 
+// cleanEmojiRun is the marker with the blanks around it, so removing it
+// from mid-text leaves one space, not two.
+var cleanEmojiRun = regexp.MustCompile(`[ \t]*` + cleanEmoji + `[ \t]*`)
+
 func stripCleanEmoji(s string) string {
-	return strings.TrimSpace(strings.ReplaceAll(s, cleanEmoji, ""))
+	return strings.TrimSpace(cleanEmojiRun.ReplaceAllString(s, " "))
 }
 
 // cleanReply adds the clean marker to the reply text of a clean image.
