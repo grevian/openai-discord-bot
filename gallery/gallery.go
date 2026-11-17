@@ -78,6 +78,13 @@ type Entry struct {
 	Prompt string `json:"prompt"`
 	Kind   Kind   `json:"kind"`
 	Style  string `json:"style"`
+	// Parent is the ID of the image this one was edited from, when that is
+	// one of ours. Entries made before lineage was recorded have none.
+	Parent string `json:"parent,omitempty"`
+	// Context is the condensed thread directives that were added to the edit
+	// prompt (see bot/editcontext.go), cleaned like the prompt. It is shown as
+	// a debug tooltip. Empty when none was used.
+	Context []string `json:"context,omitempty"`
 }
 
 // Manifest is the content of latest.json.
@@ -98,6 +105,11 @@ type Submission struct {
 	ImageKey string
 	Prompt   string
 	Kind     Kind
+	// ParentKey is the image key of the source of an edit, if it is one of
+	// our own images in the same guild. Empty otherwise.
+	ParentKey string
+	// Context is the condensed thread directives used for an edit.
+	Context []string
 }
 
 // Config is the gallery's policy. It is checked in as config.json so that
@@ -266,14 +278,59 @@ func (g *Gallery) entryFor(s Submission) (Entry, error) {
 	if kind != KindEdit {
 		kind = KindGenerate
 	}
-	return Entry{
+	e := Entry{
 		ID:      id,
 		Key:     s.ImageKey,
 		Created: g.now().UTC().Truncate(time.Second),
 		Prompt:  CleanPrompt(s.Prompt),
 		Kind:    kind,
 		Style:   StyleDanbot,
-	}, nil
+		Context: cleanContext(s.Context),
+	}
+	// Only an edit has a parent, and only an image of ours in the same group.
+	if kind == KindEdit {
+		pg, pid, ok := SplitKey(s.ParentKey)
+		if ig, _, iok := SplitKey(s.ImageKey); ok && iok && pg == ig && pid != id {
+			e.Parent = pid
+		}
+	}
+	return e, nil
+}
+
+// SplitKey splits an image key "<group>/<id>" into its parts. Unlike
+// ParseImageKey it does not require the id to be a ksuid.
+func SplitKey(key string) (group, id string, ok bool) {
+	i := strings.Index(key, "/")
+	if i <= 0 || i == len(key)-1 || strings.Contains(key[i+1:], "/") {
+		return "", "", false
+	}
+	return key[:i], key[i+1:], true
+}
+
+// maxContextLines and maxContextLineRunes bound the debug tooltip text.
+const (
+	maxContextLines     = 5
+	maxContextLineRunes = 160
+)
+
+// cleanContext cleans condensed directives for publication like a prompt, and
+// bounds their number and length. It returns nil when nothing is left.
+func cleanContext(lines []string) []string {
+	var out []string
+	for _, l := range lines {
+		l = CleanPrompt(l)
+		if r := []rune(l); len(r) > maxContextLineRunes {
+			l = strings.TrimSpace(string(r[:maxContextLineRunes-1])) + "…"
+		}
+		if l == "" {
+			continue
+		}
+		out = append(out, l)
+		if len(out) == maxContextLines {
+			break
+		}
+	}
+	return out
 }
 
 // addToManifest inserts entry into latest.json.
