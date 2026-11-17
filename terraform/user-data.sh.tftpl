@@ -6,6 +6,7 @@ PARAM_PREFIX="/${service}/${environment}"
 IMAGE_REPO="${image_repo}"
 IMAGES_BUCKET="${images_bucket}"
 CONVERSATIONS_TBL="${conversations_tbl}"
+FLAGS_TBL="${flags_tbl}"
 OTEL_VERSION="${otel_version}"
 
 dnf update -y
@@ -33,6 +34,7 @@ PARAM_PREFIX="$PARAM_PREFIX"
 IMAGE_REPO="$IMAGE_REPO"
 IMAGES_BUCKET="$IMAGES_BUCKET"
 CONVERSATIONS_TBL="$CONVERSATIONS_TBL"
+FLAGS_TBL="$FLAGS_TBL"
 
 IMAGE_TAG=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/image_tag" --query 'Parameter.Value' --output text --region "\$REGION")
 DISCORD_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/discord_token" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
@@ -40,6 +42,9 @@ OPENAI_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/openai_token" --wit
 # Optional: link summaries stay off when the key can't be read or is the placeholder.
 KAGI_API_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/kagi_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION") || KAGI_API_KEY=""
 if [ "\$KAGI_API_KEY" = "populated-out-of-band" ]; then KAGI_API_KEY=""; fi
+# Optional: the owner-only flag command stays off when the ID can't be read or is the placeholder.
+OWNER_USER_ID=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/owner_user_id" --query 'Parameter.Value' --output text --region "\$REGION") || OWNER_USER_ID=""
+if [ "\$OWNER_USER_ID" = "populated-out-of-band" ]; then OWNER_USER_ID=""; fi
 
 # Secrets go to docker through a root-only env file, not -e NAME=value, so
 # they don't show in the docker client's command line (ps, /proc/*/cmdline).
@@ -60,6 +65,8 @@ exec docker run --rm --name bot --network host --stop-timeout 45 \\
   -e BOT_OTLP_LOGS=true \\
   -e BOT_OPENAIDISCORDBOTIMAGES_NAME="\$IMAGES_BUCKET" \\
   -e AI_DISCORD_BOT_CONVERSATIONS_NAME="\$CONVERSATIONS_TBL" \\
+  -e BOT_FLAGS_TABLE="\$FLAGS_TBL" \\
+  -e BOT_OWNER_USER_ID="\$OWNER_USER_ID" \\
   -e OTEL_SERVICE_NAME=danbot \\
   -e OTEL_EXPORTER_OTLP_INSECURE=true \\
   --env-file "\$ENV_FILE" \\
