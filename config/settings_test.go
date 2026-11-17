@@ -102,3 +102,23 @@ func TestIsSecretSetting(t *testing.T) {
 		t.Error("image_base_url is not a secret")
 	}
 }
+
+func TestLoadBotSettingsOwnerUserID(t *testing.T) {
+	t.Setenv("BOT_OPERATOR_CHANNEL_ID", "")
+	t.Setenv("BOT_IMAGE_BASE_URL", "")
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{" 123456789012345678 ", "123456789012345678"},
+		// Invalid values disable the flag command instead of stopping the bot.
+		{"populated-out-of-band", ""},
+		{"12345", ""},
+		{"<@123456789012345678>", ""},
+	}
+	for _, tc := range cases {
+		t.Setenv("BOT_OWNER_USER_ID", tc.in)
+		got, err := loadBotSettings(newSettingsViper())
+		if err != nil || got.OwnerUserID != tc.want {
+			t.Errorf("BOT_OWNER_USER_ID=%q: (%q, %v), want %q and no error", tc.in, got.OwnerUserID, err, tc.want)
+		}
+	}
+}

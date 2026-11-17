@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"openai-discord-bot/bot/flags"
 	"openai-discord-bot/bot/storage"
 	"openai-discord-bot/gallery"
 
@@ -43,6 +44,14 @@ type galleryPublisher interface {
 // Reddit comment threads): wrap or replace it, and the summariser is unchanged.
 type linkExtractor interface {
 	Extract(ctx context.Context, pageURL string) (string, error)
+}
+
+// flagStore is the bot's view of the feature flags. *flags.Flags satisfies
+// it. Enabled only reads memory, so it is safe on any request path.
+type flagStore interface {
+	Enabled(ctx context.Context, flag flags.BoolFlag) bool
+	Set(ctx context.Context, name, value, by string) (flags.Change, error)
+	List() []flags.Status
 }
 
 // imageAPI is the subset of the OpenAI image service the bot uses.
@@ -96,4 +105,5 @@ var (
 	_ responsesAPI     = (*responses.ResponseService)(nil)
 	_ discordAPI       = sessionDiscord{}
 	_ linkExtractor    = (*kagiClient)(nil)
+	_ flagStore        = (*flags.Flags)(nil)
 )

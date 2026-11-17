@@ -489,6 +489,7 @@ func newTestBot(t *testing.T) *testBot {
 		timeouts:          defaultTimeouts(),
 		operatorChannelID: testOperatorChannel,
 		imageBaseURL:      testImageBaseURL,
+		flags:             NewFlags(nil),
 	}
 	return tb
 }

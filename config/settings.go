@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 
@@ -40,8 +41,21 @@ func loadBotSettings(v *viper.Viper) (bot.Settings, error) {
 		OperatorChannelID: channelID,
 		ImageBaseURL:      imageBaseURL,
 		// Optional: empty disables link summaries.
-		KagiAPIKey: strings.TrimSpace(v.GetString("KAGI_API_KEY")),
+		KagiAPIKey:  strings.TrimSpace(v.GetString("KAGI_API_KEY")),
+		OwnerUserID: ownerUserID(v),
 	}, nil
+}
+
+// ownerUserID reads BOT_OWNER_USER_ID. It is optional: empty, or an invalid
+// value (logged), turns the owner-only flag command off rather than
+// stopping the bot, because a typo in it should not take the bot down.
+func ownerUserID(v *viper.Viper) string {
+	id := strings.TrimSpace(v.GetString("OWNER_USER_ID"))
+	if id != "" && !isSnowflake(id) {
+		slog.Error("BOT_OWNER_USER_ID must be a Discord user ID (17-20 digits); the flag command is disabled", slog.String("value", id))
+		return ""
+	}
+	return id
 }
 
 // isSnowflake reports whether s looks like a Discord snowflake ID: 17 to 20

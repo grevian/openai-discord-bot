@@ -53,6 +53,28 @@ These optional variables set the values that are specific to the operator's depl
 
 The bot refuses to start if either value is invalid.
 
+`BOT_OWNER_USER_ID` (optional) is the Discord user ID (17–20 digits) of the bot owner, the only user who may change feature flags. Unset or invalid (logged) turns the flag command off; the bot still starts. `BOT_FLAGS_TABLE` (optional) is the DynamoDB table that stores the flags. Unset means every flag stays at its default and can't be changed. In production both come from `start-bot.sh` (see Deployment).
+
+### Feature flags (owner only)
+
+Feature flags switch bot behaviour on and off without a deploy. The owner sends commands to the bot **by direct message**, with or without an `@Danbot` mention:
+
+| DM | What happens |
+| --- | --- |
+| `flags` | Lists every flag with its type, current value, default, who last changed it and when, and what it does |
+| `flag set <name> <value>` | Changes one flag. Bools take `on`/`off` (also `true`/`false`, `yes`/`no`, `1`/`0`) |
+
+- Only `BOT_OWNER_USER_ID` can use these. The same commands from anyone else are ignored and logged, with no reply. Flag commands don't work in servers. There they are ordinary chat.
+- A change takes effect at once. The bot also reloads every flag from the table once a minute, so an edit made in the AWS console applies within a minute.
+- Every change is logged, saved with an audit entry in the table (`pk = audit#<name>`), and announced in the operator channel.
+- If the table is missing or unreachable, the bot runs on the defaults, or keeps the last values it loaded, and keeps working. Every default is the behaviour without the flag.
+
+| Flag | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `edit_thread_context` | bool | off | Will include the thread's conversation in image edit prompts. The feature isn't built yet, so for now it changes nothing. |
+
+Flags are defined in `bot/flags.go`. To add one, register it there with a default that keeps today's behaviour.
+
 `BOT_KAGI_API_KEY` (optional, a secret) is the [Kagi Extract API](https://kagi.com/api/docs) key used for link summaries. Unset means the summarise triggers reply that the feature isn't configured. In production, deploy.yml copies the `KAGI_API_KEY` GitHub secret into the SSM parameter `/openai-discord-bot/prod/kagi_api_key`, which the instance reads when the bot starts.
 
 ## Deployment

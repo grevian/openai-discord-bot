@@ -35,7 +35,13 @@ func main() {
 		log.Fatal("Failed to instantiate OpenAPI client", slog.Any("error", err))
 	}
 
-	botInstance := bot.NewAIBot(serviceCtx, cancel, openapiClient, discordSession, config.GetStorage(), config.GetImageStorage(), config.GetBotSettings())
+	// Feature flags: loaded now and every minute in the background. Until the
+	// first load works (or if the table is unreachable) they keep their
+	// defaults, which are the behaviour without any flag.
+	flagCache := bot.NewFlags(config.GetFlagsBackend())
+	go flagCache.Run(serviceCtx, time.Minute)
+
+	botInstance := bot.NewAIBot(serviceCtx, cancel, openapiClient, discordSession, config.GetStorage(), config.GetImageStorage(), config.GetBotSettings(), flagCache)
 
 	if g := config.GetGallery(); g != nil {
 		botInstance.SetGallery(g)
