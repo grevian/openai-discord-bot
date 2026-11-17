@@ -75,6 +75,8 @@ Secrets live in SSM SecureString parameters and are read by the instance at star
 - `/openai-discord-bot/prod/openai_token`
 - `/openai-discord-bot/prod/honeycomb_api_key` (read by the collector start script)
 
+`/openai-discord-bot/prod/owner_user_id` is a plain `String` parameter (not a secret): the Discord user ID of the bot owner, passed to the bot as `BOT_OWNER_USER_ID`. Terraform creates it with the placeholder `populated-out-of-band`, which means unset (the owner-only flag command is off). Set it with `aws ssm put-parameter --name /openai-discord-bot/prod/owner_user_id --type String --overwrite --value <your user id>`; `start-bot.sh` reads it on every bot restart, so a deploy picks up a change. Feature flags live in the DynamoDB table `openai-discord-bot-prod-flags`, passed as `BOT_FLAGS_TABLE`.
+
 ## Attaching to Discord
 
 You can authorize the currently deployed bot to your server with the following OAuth2 URL: https://discord.com/api/oauth2/authorize?client_id=1076924748124143727&permissions=395204176896&scope=bot

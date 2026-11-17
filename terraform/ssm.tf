@@ -52,3 +52,14 @@ resource "aws_ssm_parameter" "image_tag" {
     ignore_changes = [value]
   }
 }
+
+resource "aws_ssm_parameter" "owner_user_id" {
+  name        = "/${local.service}/${local.environment}/owner_user_id"
+  description = "Discord user ID of the bot owner, the only user allowed to change feature flags by DM. Not a secret. The placeholder means unset: the flag command is then off."
+  type        = "String"
+  value       = "populated-out-of-band"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}

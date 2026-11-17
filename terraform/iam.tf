@@ -33,6 +33,7 @@ resource "aws_iam_role_policy" "bot_ssm_params" {
         aws_ssm_parameter.honeycomb_api_key.arn,
         aws_ssm_parameter.kagi_api_key.arn,
         aws_ssm_parameter.image_tag.arn,
+        aws_ssm_parameter.owner_user_id.arn,
       ]
     }]
   })
@@ -68,6 +69,18 @@ resource "aws_iam_role_policy" "bot_dynamodb" {
         Effect   = "Allow"
         Action   = ["dynamodb:Query", "dynamodb:Scan"]
         Resource = "${aws_dynamodb_table.conversations.arn}/index/*"
+      },
+      {
+        Sid    = "DDBFlags"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:TransactWriteItems",
+        ]
+        Resource = aws_dynamodb_table.flags.arn
       },
     ]
   })

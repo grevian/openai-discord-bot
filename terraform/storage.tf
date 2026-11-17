@@ -113,3 +113,26 @@ resource "aws_dynamodb_table" "conversations" {
     prevent_destroy = true
   }
 }
+
+# Remote-controllable feature flags (bot/flags). The current value of a flag
+# is at pk=<name>, sk="current"; every change also writes an audit item at
+# pk="audit#<name>", sk=<unix ms>. pk is ready for scoped overrides later
+# (<name>#guild:<id>). The bot runs on code defaults if this table is
+# missing or unreachable, so it is not prevent_destroy.
+resource "aws_dynamodb_table" "flags" {
+  name                        = "${local.name_prefix}-flags"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "pk"
+  range_key                   = "sk"
+  deletion_protection_enabled = true
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+}
