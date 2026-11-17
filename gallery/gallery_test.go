@@ -557,3 +557,70 @@ func ids(m Manifest) []string {
 	}
 	return out
 }
+
+func TestEditRecordsParentAndCondensedContext(t *testing.T) {
+	store := newMemStore()
+	g := newTestGallery(defaultCfg, store)
+	s := sub("g1", 2)
+	s.Kind = KindEdit
+	s.ParentKey = "g1/id001"
+	s.Context = []string{"everyone wears a hat", "<@123456> the sky is green", "  "}
+	if err := g.Publish(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	e := store.manifest(t).Items[0]
+	if e.Parent != "id001" {
+		t.Errorf("Parent = %q", e.Parent)
+	}
+	if len(e.Context) != 2 || e.Context[0] != "everyone wears a hat" || strings.Contains(e.Context[1], "123456") {
+		t.Errorf("Context = %q", e.Context)
+	}
+	body, _, err := store.Get(context.Background(), ItemPrefix+"id002.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"parent":"id001"`) || !strings.Contains(string(body), `"context"`) {
+		t.Errorf("sidecar lacks lineage: %s", body)
+	}
+}
+
+func TestParentIsOnlyKeptForAnEditInTheSameGroup(t *testing.T) {
+	g := newTestGallery(defaultCfg, newMemStore())
+	for name, s := range map[string]Submission{
+		"generate":    {GuildID: "g1", ImageKey: "g1/b", Kind: KindGenerate, ParentKey: "g1/a"},
+		"other guild": {GuildID: "g1", ImageKey: "g1/b", Kind: KindEdit, ParentKey: "g2/a"},
+		"not a key":   {GuildID: "g1", ImageKey: "g1/b", Kind: KindEdit, ParentKey: "../a"},
+		"itself":      {GuildID: "g1", ImageKey: "g1/b", Kind: KindEdit, ParentKey: "g1/b"},
+		"no parent":   {GuildID: "g1", ImageKey: "g1/b", Kind: KindEdit},
+	} {
+		e, err := g.entryFor(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Parent != "" {
+			t.Errorf("%s: Parent = %q, want none", name, e.Parent)
+		}
+	}
+}
+
+// Manifests written before lineage existed still load, and re-serialise
+// without the new fields.
+func TestEntriesWithoutLineageStillLoad(t *testing.T) {
+	store := newMemStore()
+	old := `{"version":1,"updated":"2026-11-01T12:00:00Z","items":[{"id":"old1","key":"g1/old1","created":"2026-11-01T11:00:00Z","prompt":"p","kind":"edit","style":"danbot"}]}`
+	if err := store.Put(context.Background(), ManifestKey, []byte(old), PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	g := newTestGallery(defaultCfg, store)
+	if err := g.Publish(context.Background(), sub("g1", 3)); err != nil {
+		t.Fatal(err)
+	}
+	m := store.manifest(t)
+	if len(m.Items) != 2 {
+		t.Fatalf("items = %+v", m.Items)
+	}
+	body, _, _ := store.Get(context.Background(), ManifestKey)
+	if strings.Contains(string(body), `"parent"`) || strings.Contains(string(body), `"context"`) {
+		t.Errorf("empty lineage fields must be omitted: %s", body)
+	}
+}

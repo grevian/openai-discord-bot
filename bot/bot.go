@@ -546,7 +546,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "a picture I drawed", prompt, gallery.KindGenerate, m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "a picture I drawed", prompt, gallery.KindGenerate, editOrigin{}, m); err != nil {
 		return err
 	}
 
@@ -572,7 +572,7 @@ func firstImageB64(resp *openai.ImagesResponse) (string, error) {
 // their own reader over those bytes, so an S3 failure cannot truncate what
 // Discord receives, and a Discord failure cannot block the S3 upload. Both
 // finish before this returns.
-func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, responseChannel, b64, content, prompt string, kind gallery.Kind, m *discordgo.MessageCreate) error {
+func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, responseChannel, b64, content, prompt string, kind gallery.Kind, origin editOrigin, m *discordgo.MessageCreate) error {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
 	image, err := base64.StdEncoding.DecodeString(b64)
@@ -587,7 +587,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 		defer wg.Done()
 		// This goroutine is outside the handler's recover, so it needs its own.
 		defer recoverHandler("archiveImage")
-		b.archiveImage(ctx, span, responseChannel, m.GuildID, image, prompt, kind)
+		b.archiveImage(ctx, span, responseChannel, m.GuildID, image, prompt, kind, origin)
 	}()
 
 	opt, cancel := b.discordCtx(ctx)
@@ -613,7 +613,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 // URL in the thread context. Failures are recorded and logged, not returned:
 // the user already has the image in Discord. Once the image is stored it is
 // also offered to the public gallery.
-func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID string, image []byte, prompt string, kind gallery.Kind) {
+func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID string, image []byte, prompt string, kind gallery.Kind, origin editOrigin) {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
 	storeCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
@@ -630,6 +630,9 @@ func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChann
 		ImageKey: imageKey,
 		Prompt:   b.galleryPrompt(prompt),
 		Kind:     kind,
+		// The source URL is user-supplied: only one of our own keys counts.
+		ParentKey: b.imageKeyFromURL(origin.sourceURL),
+		Context:   origin.directives,
 	})
 
 	imageUrl := fmt.Sprintf("%s/%s", b.imageBaseURL, imageKey)
@@ -659,6 +662,28 @@ func (b *AIBot) publishToGallery(ctx context.Context, s gallery.Submission) {
 				slog.String("image_key", s.ImageKey), slog.Any("error", err))
 		}
 	}()
+}
+
+// editOrigin is what an edited image came from: the image it was edited from
+// and the condensed thread directives that went into its prompt. The zero
+// value is a fresh drawing.
+type editOrigin struct {
+	sourceURL  string
+	directives []string
+}
+
+// imageKeyFromURL returns the archive key ("<guild>/<id>") of a URL under the
+// image base URL, or "" for any other URL.
+func (b *AIBot) imageKeyFromURL(u string) string {
+	base := strings.TrimRight(b.imageBaseURL, "/") + "/"
+	if base == "/" || !strings.HasPrefix(u, base) {
+		return ""
+	}
+	key := strings.TrimPrefix(u, base)
+	if _, _, ok := gallery.SplitKey(key); !ok {
+		return ""
+	}
+	return key
 }
 
 // galleryPrompt removes the bot's own mention from a prompt before it is
@@ -704,10 +729,11 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	}
 
 	fullPrompt := buildEditPrompt(prompt, b.editInstructions)
+	var directives []string
 	if useThreadContext {
 		// threadContext was loaded before this edit was recorded, so it holds
 		// only earlier messages (and is empty outside a thread).
-		directives := b.editDirectives(ctx, threadContext, prompt)
+		directives = b.editDirectives(ctx, threadContext, prompt)
 		span.SetAttributes(attribute.Int("edit_context.directives", len(directives)))
 		fullPrompt = buildEditPromptWithContext(prompt, directives, b.editInstructions)
 	}
@@ -742,7 +768,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "here ya go", prompt, gallery.KindEdit, m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "here ya go", prompt, gallery.KindEdit, editOrigin{sourceURL: sourceURL, directives: directives}, m); err != nil {
 		return err
 	}
 

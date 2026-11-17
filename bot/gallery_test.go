@@ -12,6 +12,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/responses"
 )
 
 // fakeGallery is a galleryPublisher that records what it was offered.
@@ -357,5 +358,53 @@ func TestDrainGalleryWaitsForStragglerHandler(t *testing.T) {
 	}
 	if len(g.submissions()) != 1 {
 		t.Error("the straggler's publish did not complete")
+	}
+}
+
+// An edit of one of our own archived images records it as the parent, and the
+// condensed directives that went into the prompt are offered with it.
+func TestEditRecordsLineageAndCondensedContext(t *testing.T) {
+	g := &fakeGallery{}
+	tb := editThreadBot(t, true, sampleThread)
+	tb.bot.SetGallery(g)
+	srcURL := testImageBaseURL + "/guild-1/image-0"
+	tb.imgStore.sources[srcURL] = pngBytes
+	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+		return textResponse("- everyone wears a hat\n- the sky is green"), nil
+	}
+	m := mention("edit: add a dog")
+	m.Attachments = []*discordgo.MessageAttachment{{URL: srcURL, Filename: "source.png"}}
+	tb.bot.handleMessage(context.Background(), m)
+	tb.bot.galleryWG.Wait()
+
+	got := g.submissions()
+	if len(got) != 1 {
+		t.Fatalf("submissions = %+v", got)
+	}
+	if got[0].ParentKey != "guild-1/image-0" {
+		t.Errorf("ParentKey = %q", got[0].ParentKey)
+	}
+	if len(got[0].Context) != 2 || got[0].Context[0] != "everyone wears a hat" {
+		t.Errorf("Context = %q", got[0].Context)
+	}
+}
+
+// A source that is not one of our archived images (a Discord attachment, or
+// any other host) gives no lineage.
+func TestForeignSourceHasNoLineage(t *testing.T) {
+	g := &fakeGallery{}
+	tb := drawingBot(t, g)
+	tb.imgStore.sources[editSrcURL] = pngBytes
+	tb.bot.handleMessage(context.Background(), editMention("edit: add a hat"))
+	tb.bot.galleryWG.Wait()
+
+	got := g.submissions()
+	if len(got) != 1 {
+		t.Fatalf("submissions = %+v", got)
+	}
+	for _, s := range got {
+		if s.ParentKey != "" || len(s.Context) != 0 {
+			t.Errorf("unexpected lineage: %+v", s)
+		}
 	}
 }

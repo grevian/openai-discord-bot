@@ -17,7 +17,9 @@ class Node {
     this.attrs = {};
     this.children = [];
     this._text = '';
+    this.listeners = {};
   }
+  addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   appendChild(c) { this.children.push(c); return c; }
   removeChild(c) { this.children.splice(this.children.indexOf(c), 1); return c; }
@@ -46,7 +48,7 @@ const items = hostile.map((p, i) => ({
 }));
 assert.strictEqual(api.render(doc, grid, { items }, NOW), hostile.length);
 
-const allowedTags = new Set(['ul', 'li', 'a', 'img', 'p', 'span']);
+const allowedTags = new Set(['ul', 'ol', 'li', 'a', 'img', 'p', 'span', 'button', 'div']);
 created.forEach((n) => assert(allowedTags.has(n.tagName), 'unexpected element ' + n.tagName));
 
 grid.children.forEach((li, i) => {
@@ -96,5 +98,48 @@ assert.strictEqual(t(60), '1 minute ago');
 assert.strictEqual(t(2 * 3600), '2 hours ago');
 assert.strictEqual(t(3 * 86400), '3 days ago');
 assert.strictEqual(api.relativeTime('garbage', NOW), '');
+
+// 7. Lineage grouping: a chain is one stack, newest first, placed by its
+// newest member; old entries without lineage stay single.
+const E = (id, extra) => Object.assign({ id, key: 'g/' + id, prompt: id, created: '2026-11-05T11:00:00Z' }, extra);
+const ids = (stacks) => stacks.map((s) => s.map((e) => e.id));
+assert.deepStrictEqual(
+  ids(api.groupStacks([E('d', { parent: 'c' }), E('x'), E('c', { parent: 'a' }), E('b', { parent: 'a' }), E('a'), E('old')])),
+  [['d', 'c', 'b', 'a'], ['x'], ['old']]);
+// A parent that fell out of the manifest: the oldest present ancestor roots the stack.
+assert.deepStrictEqual(ids(api.groupStacks([E('c', { parent: 'b' }), E('b', { parent: 'gone' })])), [['c', 'b']]);
+// A lone edit whose parent is absent is a single; cycles and self-parents do not hang.
+assert.deepStrictEqual(ids(api.groupStacks([E('e', { parent: 'gone' })])), [['e']]);
+assert.deepStrictEqual(ids(api.groupStacks([E('p', { parent: 'q' }), E('q', { parent: 'p' })])).map((s) => s.length), [2]);
+assert.deepStrictEqual(ids(api.groupStacks([E('s', { parent: 's' })])), [['s']]);
+// Unusable entries are dropped, and ids that are not strings never group.
+assert.deepStrictEqual(ids(api.groupStacks([null, { id: 'z', key: 'bad key' }, E('k')])), [['k']]);
+
+const stackGrid = new Node('ul');
+assert.strictEqual(api.render(doc, stackGrid, { items: [E('c', { parent: 'a', kind: 'edit' }), E('a'), E('solo')] }, NOW), 2);
+const stackLi = stackGrid.children[0];
+assert(stackLi.className.includes('stack'), 'chain not rendered as a stack');
+let toggleBtn = null; let memberList = null;
+stackLi.walk((n) => { if (n.tagName === 'button') toggleBtn = n; if (n.tagName === 'ol') memberList = n; });
+assert.strictEqual(toggleBtn.attrs['aria-expanded'], 'false');
+assert.deepStrictEqual(memberList.children.map((m) => m.children[0].attrs.href), ['/g/a', '/g/c'], 'members oldest first');
+toggleBtn.listeners.click[0]();
+assert(stackLi.className.includes('open'));
+assert.strictEqual(toggleBtn.attrs['aria-expanded'], 'true');
+toggleBtn.listeners.click[0]();
+assert(!stackLi.className.includes('open'));
+
+// 8. The debug tooltip: only with a condensed prompt, always as text.
+const tipOf = (li) => { let tip = null; li.walk((n) => { if (n.className === 'tip') tip = n; }); return tip; };
+const noCtx = api.buildCard(doc, E('n'), NOW);
+assert.strictEqual(tipOf(noCtx), null, 'tooltip without a condensed prompt');
+assert.strictEqual(tipOf(api.buildCard(doc, E('n', { context: [] }), NOW)), null);
+assert.strictEqual(tipOf(api.buildCard(doc, E('n', { context: ['', 7, null] }), NOW)), null);
+const withCtx = api.buildCard(doc, E('w', { context: hostile }), NOW);
+const lines = [];
+withCtx.walk((n) => { if (n.className === 'tip-line') lines.push(n.textContent); });
+assert.deepStrictEqual(lines, hostile);
+withCtx.walk((n) => { for (const [k, v] of Object.entries(n.attrs)) hostile.forEach((h) => assert(!v.includes(h), k + ' carries context text')); });
+assert.strictEqual(api.render(doc, new Node('ul'), { items: [E('w', { context: 'not a list' })] }, NOW), 1);
 
 console.log('ok');
