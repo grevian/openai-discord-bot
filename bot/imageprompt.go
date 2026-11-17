@@ -28,3 +28,37 @@ func buildEditPrompt(change, keepList string) string {
 	}
 	return p
 }
+
+// cleanEmoji asks for an image without the danbot prompt. It is the marker in
+// the request, and the bot puts it in the reply to a clean image so that
+// edits made as a reply to that image stay clean.
+const cleanEmoji = "🫧"
+
+func hasCleanEmoji(s string) bool { return strings.Contains(s, cleanEmoji) }
+
+func stripCleanEmoji(s string) string {
+	return strings.TrimSpace(strings.ReplaceAll(s, cleanEmoji, ""))
+}
+
+// cleanReply adds the clean marker to the reply text of a clean image.
+func cleanReply(content string, clean bool) string {
+	if clean {
+		return content + " " + cleanEmoji
+	}
+	return content
+}
+
+// buildCleanEditPromptWithContext is the user's change as written, followed
+// by any thread directives. No danbot framing or keep list is added.
+func buildCleanEditPromptWithContext(change string, directives []string) string {
+	if len(directives) == 0 {
+		return change
+	}
+	for n := len(directives); n > 0; n-- {
+		p := change + "\n" + editContextHeading + "\n- " + strings.Join(directives[:n], "\n- ")
+		if utf8.RuneCountInString(p) <= maxEditPromptChars {
+			return p
+		}
+	}
+	return change
+}

@@ -248,10 +248,10 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 	case wantsEditNoImage && !wantsDraw:
 		return intentEditNoImage, sanitizedUserPrompt
 	case wantsEdit:
-		return intentEdit, stripEditTriggers(sanitizedUserPrompt)
+		return intentEdit, stripCleanEmoji(stripEditTriggers(sanitizedUserPrompt))
 	case wantsDraw:
 		// Strip the prompt prefix out of the message
-		return intentDraw, stripDrawTriggers(sanitizedUserPrompt)
+		return intentDraw, stripCleanEmoji(stripDrawTriggers(sanitizedUserPrompt))
 	case wantsSummary:
 		return intentSummarize, summaryURL
 	default:
@@ -331,8 +331,11 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	ctx, stopTyping := b.keepTyping(ctx, responseChannel)
 	defer stopTyping()
 
-	sourceImageURL := b.findEditSourceImage(ctx, m)
+	sourceImageURL, sourceIsClean := b.findEditSource(ctx, m)
 	intent, prompt := classifyMessage(m.Content, self.ID, sourceImageURL != "")
+	// Clean is asked for with 🫧 in the message text (not as a reaction), and
+	// is sticky: an edit of a clean image stays clean.
+	clean := hasCleanEmoji(m.Content) || (intent == intentEdit && sourceIsClean)
 
 	switch intent {
 	case intentHelp:
@@ -340,9 +343,9 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	case intentEditNoImage:
 		err = b.sendMessage(ctx, responseChannel, msgEditNeedsImage)
 	case intentEdit:
-		err = b.handleImageEditMessage(ctx, responseChannel, prompt, sourceImageURL, threadPromptContext, m)
+		err = b.handleImageEditMessage(ctx, responseChannel, prompt, sourceImageURL, clean, threadPromptContext, m)
 	case intentDraw:
-		err = b.handleImageMessage(ctx, responseChannel, prompt, m)
+		err = b.handleImageMessage(ctx, responseChannel, prompt, clean, m)
 	case intentSummarize:
 		err = b.handleSummarizeMessage(ctx, responseChannel, prompt, m)
 	default:
@@ -504,7 +507,7 @@ func waitOrCancel(ctx context.Context, wg *sync.WaitGroup, onTimeout func()) err
 	}
 }
 
-func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, m *discordgo.MessageCreate) error {
+func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, clean bool, m *discordgo.MessageCreate) error {
 	var err error
 
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageMessage")
@@ -518,7 +521,11 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 
 	// The image API has no system-prompt slot, so the scene and the danbot
 	// art style share one prompt (scene first, then the style block).
-	fullPrompt := buildDrawPrompt(prompt, b.drawingInstructions)
+	// A clean request sends the user's text alone.
+	fullPrompt := prompt
+	if !clean {
+		fullPrompt = buildDrawPrompt(prompt, b.drawingInstructions)
+	}
 
 	// Request the image(s) from openAI
 	imageRequest := openai.ImageGenerateParams{
@@ -546,7 +553,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "a picture I drawed", prompt, gallery.KindGenerate, m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("a picture I drawed", clean), prompt, gallery.KindGenerate, m); err != nil {
 		return err
 	}
 
@@ -674,7 +681,7 @@ func (b *AIBot) galleryPrompt(prompt string) string {
 // handleImageEditMessage takes a prompt and a URL to an existing image and asks
 // OpenAI's image edit endpoint to produce a modified version, then ships it the
 // same way handleImageMessage does for fresh generations.
-func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, prompt, sourceURL string, threadContext []storage.ConversationMessage, m *discordgo.MessageCreate) error {
+func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, prompt, sourceURL string, clean bool, threadContext []storage.ConversationMessage, m *discordgo.MessageCreate) error {
 	logger := slog.Default().WithGroup("handleImageEditMessage")
 
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageEditMessage")
@@ -704,12 +711,19 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	}
 
 	fullPrompt := buildEditPrompt(prompt, b.editInstructions)
+	if clean {
+		fullPrompt = prompt
+	}
 	if useThreadContext {
 		// threadContext was loaded before this edit was recorded, so it holds
 		// only earlier messages (and is empty outside a thread).
 		directives := b.editDirectives(ctx, threadContext, prompt)
 		span.SetAttributes(attribute.Int("edit_context.directives", len(directives)))
-		fullPrompt = buildEditPromptWithContext(prompt, directives, b.editInstructions)
+		if clean {
+			fullPrompt = buildCleanEditPromptWithContext(prompt, directives)
+		} else {
+			fullPrompt = buildEditPromptWithContext(prompt, directives, b.editInstructions)
+		}
 	}
 
 	// The OpenAI multipart encoder needs a recognizable filename + content type;
@@ -742,7 +756,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, "here ya go", prompt, gallery.KindEdit, m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("here ya go", clean), prompt, gallery.KindEdit, m); err != nil {
 		return err
 	}
 
@@ -789,9 +803,17 @@ func (b *AIBot) fetchSourceImage(ctx context.Context, sourceURL string) ([]byte,
 // to an attachment on the message it's replying to (if that message came from
 // us). Returns "" when no candidate exists.
 func (b *AIBot) findEditSourceImage(ctx context.Context, m *discordgo.MessageCreate) string {
+	url, _ := b.findEditSource(ctx, m)
+	return url
+}
+
+// findEditSource is findEditSourceImage that also reports whether the source
+// is a clean image: one of the bot's own replies that carries the clean marker.
+// An attached image has no marker, so the user adds 🫧 again.
+func (b *AIBot) findEditSource(ctx context.Context, m *discordgo.MessageCreate) (string, bool) {
 	for _, att := range m.Attachments {
 		if isImageAttachment(att) {
-			return att.URL
+			return att.URL, false
 		}
 	}
 
@@ -807,14 +829,14 @@ func (b *AIBot) findEditSourceImage(ctx context.Context, m *discordgo.MessageCre
 		}
 	}
 	if ref == nil || ref.Author == nil || ref.Author.ID != b.discord.BotUser().ID {
-		return ""
+		return "", false
 	}
 	for _, att := range ref.Attachments {
 		if isImageAttachment(att) {
-			return att.URL
+			return att.URL, hasCleanEmoji(ref.Content)
 		}
 	}
-	return ""
+	return "", false
 }
 
 // detectImageType sniffs the leading bytes of an image and returns the MIME
