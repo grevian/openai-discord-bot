@@ -340,7 +340,7 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	case intentEditNoImage:
 		err = b.sendMessage(ctx, responseChannel, msgEditNeedsImage)
 	case intentEdit:
-		err = b.handleImageEditMessage(ctx, responseChannel, prompt, sourceImageURL, m)
+		err = b.handleImageEditMessage(ctx, responseChannel, prompt, sourceImageURL, threadPromptContext, m)
 	case intentDraw:
 		err = b.handleImageMessage(ctx, responseChannel, prompt, m)
 	case intentSummarize:
@@ -674,14 +674,14 @@ func (b *AIBot) galleryPrompt(prompt string) string {
 // handleImageEditMessage takes a prompt and a URL to an existing image and asks
 // OpenAI's image edit endpoint to produce a modified version, then ships it the
 // same way handleImageMessage does for fresh generations.
-func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, prompt, sourceURL string, m *discordgo.MessageCreate) error {
+func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, prompt, sourceURL string, threadContext []storage.ConversationMessage, m *discordgo.MessageCreate) error {
 	logger := slog.Default().WithGroup("handleImageEditMessage")
 
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageEditMessage")
 	defer span.End()
 	span.SetAttributes(attribute.String("source_url", sourceURL))
-	// The edit_thread_context check point. The thread-context prompt is a
-	// later change; until then both values send the same request.
+	// With edit_thread_context on, the thread's earlier messages are condensed
+	// into directives for the prompt. Off, the request is the plain one.
 	useThreadContext := b.flags.Enabled(ctx, EditThreadContext)
 	span.SetAttributes(attribute.Bool("flag.edit_thread_context", useThreadContext))
 
@@ -704,6 +704,13 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	}
 
 	fullPrompt := buildEditPrompt(prompt, b.editInstructions)
+	if useThreadContext {
+		// threadContext was loaded before this edit was recorded, so it holds
+		// only earlier messages (and is empty outside a thread).
+		directives := b.editDirectives(ctx, threadContext, prompt)
+		span.SetAttributes(attribute.Int("edit_context.directives", len(directives)))
+		fullPrompt = buildEditPromptWithContext(prompt, directives, b.editInstructions)
+	}
 
 	// The OpenAI multipart encoder needs a recognizable filename + content type;
 	// without it the form part is sent as application/octet-stream and the Edit

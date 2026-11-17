@@ -71,7 +71,7 @@ Feature flags switch bot behaviour on and off without a deploy. The owner sends 
 
 | Flag | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `edit_thread_context` | bool | off | Will include the thread's conversation in image edit prompts. The feature isn't built yet, so for now it changes nothing. |
+| `edit_thread_context` | bool | off | In a thread, an image edit also reads the thread's earlier user messages (the newest 10, at most 2,000 characters, text only, links removed). One short text call with the chat model (25 second limit) condenses them into at most 5 short drawing directives, and these go into the edit prompt after the requested change. If the call fails, times out or finds nothing, the edit runs as if the flag were off. Costs one extra text call and a little latency per edit in a thread; outside a thread nothing changes. |
 
 Flags are defined in `bot/flags.go`. To add one, register it there with a default that keeps today's behaviour.
 
