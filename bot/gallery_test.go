@@ -13,6 +13,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
+	"github.com/segmentio/ksuid"
 )
 
 // fakeGallery is a galleryPublisher that records what it was offered.
@@ -84,7 +85,7 @@ func TestDrawIsOfferedToTheGallery(t *testing.T) {
 		t.Fatalf("submissions = %+v", got)
 	}
 	s := got[0]
-	if s.GuildID != guildID || s.ImageKey != "guild-1/image-1" || s.Kind != gallery.KindGenerate {
+	if s.GuildID != guildID || s.ImageKey != "guild-1/"+tb.imgStore.storedImages()[0].ID || s.Kind != gallery.KindGenerate {
 		t.Errorf("submission = %+v", s)
 	}
 	// Only what the user asked for: not the drawing instructions, not the
@@ -361,50 +362,108 @@ func TestDrainGalleryWaitsForStragglerHandler(t *testing.T) {
 	}
 }
 
-// An edit of one of our own archived images records it as the parent, and the
-// condensed directives that went into the prompt are offered with it.
+// A redraw made by replying to the bot's image (the usual way) records that
+// image as the parent: the bot names its Discord upload after the archive id
+// and reads it back from the replied-to message. The source URL itself is a
+// Discord attachment, never one of our archive URLs. The condensed directives
+// that went into the prompt are offered with it.
 func TestEditRecordsLineageAndCondensedContext(t *testing.T) {
 	g := &fakeGallery{}
 	tb := editThreadBot(t, true, sampleThread)
 	tb.bot.SetGallery(g)
-	srcURL := testImageBaseURL + "/guild-1/image-0"
-	tb.imgStore.sources[srcURL] = pngBytes
+	b64 := base64.StdEncoding.EncodeToString(pngBytes)
+	tb.images.generate = func(context.Context, openai.ImageGenerateParams) (*openai.ImagesResponse, error) {
+		return imageResponse(b64), nil
+	}
 	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
 		return textResponse("- everyone wears a hat\n- the sky is green"), nil
 	}
+
+	tb.bot.handleMessage(context.Background(), mention("draw me a picture of a cat"))
+	tb.bot.galleryWG.Wait()
+	sent := tb.discord.sentMessages()
+	if len(sent) != 1 || len(g.submissions()) != 1 {
+		t.Fatalf("draw: sent %+v, submissions %+v", sent, g.submissions())
+	}
+	drawn := g.submissions()[0].ImageKey
+
 	m := mention("edit: add a dog")
-	m.Attachments = []*discordgo.MessageAttachment{{URL: srcURL, Filename: "source.png"}}
+	m.ReferencedMessage = &discordgo.Message{
+		Author:      &discordgo.User{ID: botID},
+		Attachments: []*discordgo.MessageAttachment{{URL: editSrcURL, Filename: sent[0].FileName}},
+	}
 	tb.bot.handleMessage(context.Background(), m)
 	tb.bot.galleryWG.Wait()
 
 	got := g.submissions()
-	if len(got) != 1 {
+	if len(got) != 2 {
 		t.Fatalf("submissions = %+v", got)
 	}
-	if got[0].ParentKey != "guild-1/image-0" {
-		t.Errorf("ParentKey = %q", got[0].ParentKey)
+	if got[1].Kind != gallery.KindEdit || got[1].ParentKey != drawn {
+		t.Errorf("edit submission = %+v, want parent %q", got[1], drawn)
 	}
-	if len(got[0].Context) != 2 || got[0].Context[0] != "everyone wears a hat" {
-		t.Errorf("Context = %q", got[0].Context)
+	if len(got[1].Context) != 2 || got[1].Context[0] != "everyone wears a hat" {
+		t.Errorf("Context = %q", got[1].Context)
 	}
 }
 
-// A source that is not one of our archived images (a Discord attachment, or
-// any other host) gives no lineage.
+// Only the bot's own replies name a parent: an image a user attached gives no
+// lineage even if its file name looks like ours, nor does an old reply made
+// before uploads were named after their archive id.
 func TestForeignSourceHasNoLineage(t *testing.T) {
+	ours := "danbot-" + ksuid.New().String() + ".png"
+	tests := []struct {
+		name  string
+		setup func(*discordgo.MessageCreate)
+	}{
+		{"user attachment", func(m *discordgo.MessageCreate) {
+			m.Attachments = []*discordgo.MessageAttachment{{URL: editSrcURL, Filename: "source.png"}}
+		}},
+		{"user attachment named like ours", func(m *discordgo.MessageCreate) {
+			m.Attachments = []*discordgo.MessageAttachment{{URL: editSrcURL, Filename: ours}}
+		}},
+		{"old bot reply", func(m *discordgo.MessageCreate) {
+			m.ReferencedMessage = &discordgo.Message{Author: &discordgo.User{ID: botID},
+				Attachments: []*discordgo.MessageAttachment{{URL: editSrcURL, Filename: "danbot-drawing.png"}}}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := &fakeGallery{}
+			tb := drawingBot(t, g)
+			tb.imgStore.sources[editSrcURL] = pngBytes
+			m := mention("edit: add a hat")
+			tt.setup(m)
+			tb.bot.handleMessage(context.Background(), m)
+			tb.bot.galleryWG.Wait()
+
+			got := g.submissions()
+			if len(got) != 1 {
+				t.Fatalf("submissions = %+v", got)
+			}
+			if got[0].Kind != gallery.KindEdit || got[0].ParentKey != "" || len(got[0].Context) != 0 {
+				t.Errorf("unexpected lineage: %+v", got[0])
+			}
+		})
+	}
+}
+
+// The image sent to Discord is named after the id it is archived under.
+func TestDiscordUploadIsNamedAfterArchiveID(t *testing.T) {
 	g := &fakeGallery{}
 	tb := drawingBot(t, g)
-	tb.imgStore.sources[editSrcURL] = pngBytes
-	tb.bot.handleMessage(context.Background(), editMention("edit: add a hat"))
+	tb.bot.handleMessage(context.Background(), mention("draw me a picture of a cat"))
 	tb.bot.galleryWG.Wait()
 
-	got := g.submissions()
-	if len(got) != 1 {
-		t.Fatalf("submissions = %+v", got)
+	sent, got := tb.discord.sentMessages(), g.submissions()
+	if len(sent) != 1 || len(got) != 1 {
+		t.Fatalf("sent %+v, submissions %+v", sent, got)
 	}
-	for _, s := range got {
-		if s.ParentKey != "" || len(s.Context) != 0 {
-			t.Errorf("unexpected lineage: %+v", s)
-		}
+	_, id, ok := gallery.SplitKey(got[0].ImageKey)
+	if !ok || sent[0].FileName != "danbot-"+id+".png" {
+		t.Errorf("file name %q, archive key %q", sent[0].FileName, got[0].ImageKey)
+	}
+	if _, err := ksuid.Parse(id); err != nil {
+		t.Errorf("archive id %q is not a ksuid: %v", id, err)
 	}
 }

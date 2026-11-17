@@ -28,7 +28,9 @@ type threadStore interface {
 // imageStore stores generated images and fetches source images for edits.
 // *storage.ImageStorage satisfies it.
 type imageStore interface {
-	StoreImage(ctx context.Context, groupId string, reader io.Reader, contentLength int64) (string, error)
+	// StoreImage stores an image under "<groupId>/<id>" (id is a ksuid,
+	// see newImageID) and returns that key.
+	StoreImage(ctx context.Context, groupId, id string, reader io.Reader, contentLength int64) (string, error)
 	GetImageFromURL(ctx context.Context, URL string) (io.ReadCloser, int64, error)
 }
 
