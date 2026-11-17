@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 
+	"openai-discord-bot/bot/flags"
 	"openai-discord-bot/bot/storage"
 	"openai-discord-bot/gallery"
 
@@ -42,6 +43,9 @@ type Settings struct {
 	// KagiAPIKey authenticates link summaries with the Kagi Extract API.
 	// Empty disables them: the summarise trigger then says so.
 	KagiAPIKey string
+	// OwnerUserID is the Discord user allowed to change feature flags by
+	// DM. Empty turns the flag command off.
+	OwnerUserID string
 }
 
 type AIBot struct {
@@ -66,6 +70,11 @@ type AIBot struct {
 	// linkExamples are in-character reactions to example pages, sent before
 	// a link summary request to show the voice wanted.
 	linkExamples []linkExample
+	// flags holds the feature flags. Never nil: NewAIBot falls back to
+	// defaults only.
+	flags flagStore
+	// ownerUserID may change flags by DM. Empty disables the command.
+	ownerUserID string
 	// galleryWG tracks in-flight gallery publishes.
 	galleryWG sync.WaitGroup
 
@@ -120,7 +129,7 @@ func isFatalOpenAIError(err error) bool {
 	return apiErr.Code == "insufficient_quota" || apiErr.Code == "invalid_api_key"
 }
 
-func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage, settings Settings) *AIBot {
+func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage, settings Settings, flagCache *flags.Flags) *AIBot {
 	prompt, err := loadPromptFile("prompts/danbo.json")
 	if err != nil {
 		log.Panic(err)
@@ -141,6 +150,14 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 		timeouts:            defaultTimeouts(),
 		operatorChannelID:   settings.OperatorChannelID,
 		imageBaseURL:        settings.ImageBaseURL,
+		flags:               flagCache,
+		ownerUserID:         settings.OwnerUserID,
+	}
+	if flagCache == nil {
+		bot.flags = NewFlags(nil)
+	}
+	if settings.OwnerUserID == "" {
+		slog.Warn("BOT_OWNER_USER_ID is not set, the flag command is disabled")
 	}
 	if settings.KagiAPIKey != "" {
 		bot.links = newKagiClient(settings.KagiAPIKey)
@@ -270,6 +287,12 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	logger := slog.Default().WithGroup("messageCreate")
 	self := b.discord.BotUser()
 	if m.Author.ID == self.ID {
+		return
+	}
+
+	// Owner flag commands come by DM, with or without a mention, so they
+	// are routed before the mention check.
+	if m.GuildID == "" && b.handleFlagDM(ctx, m, self.ID) {
 		return
 	}
 
@@ -657,6 +680,10 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageEditMessage")
 	defer span.End()
 	span.SetAttributes(attribute.String("source_url", sourceURL))
+	// The edit_thread_context check point. The thread-context prompt is a
+	// later change; until then both values send the same request.
+	useThreadContext := b.flags.Enabled(ctx, EditThreadContext)
+	span.SetAttributes(attribute.Bool("flag.edit_thread_context", useThreadContext))
 
 	if err := b.addThreadMessage(ctx, responseChannel,
 		fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID),

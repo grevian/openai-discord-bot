@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
 	"openai-discord-bot/bot"
+	"openai-discord-bot/bot/flags"
 	"openai-discord-bot/bot/storage"
 	"openai-discord-bot/config/awstrace"
 	"openai-discord-bot/gallery"
@@ -105,6 +106,17 @@ func GetBotSettings() bot.Settings {
 
 func GetStorage() *storage.Storage {
 	return storage.NewStorage(GetAWSConfig())
+}
+
+// GetFlagsBackend returns the feature flag store, or nil (defaults only)
+// when BOT_FLAGS_TABLE is not set.
+func GetFlagsBackend() flags.Backend {
+	table := strings.TrimSpace(viper.GetString("FLAGS_TABLE"))
+	if table == "" {
+		slog.Warn("BOT_FLAGS_TABLE is not set, feature flags stay at their defaults")
+		return nil
+	}
+	return flags.NewDynamoBackend(GetAWSConfig(), table)
 }
 
 func GetImageStorage() *storage.ImageStorage {
