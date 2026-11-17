@@ -130,6 +130,8 @@ func TestClassifyMessage(t *testing.T) {
 		{"chat strips mention", me + " hello there", false, intentChat, " hello there"},
 		{"draw phrase", me + " Draw me a picture of a Cat", false, intentDraw, "a Cat"},
 		{"draw emoji", me + " 🎨 a Dog", false, intentDraw, "a Dog"},
+		{"clean draw", me + " 🎨 🫧 a Cat", false, intentDraw, "a Cat"},
+		{"clean edit", me + " ✏️ 🫧 add a hat", true, intentEdit, "add a hat"},
 		{"edit pencil", me + " ✏️ add a hat", true, intentEdit, "add a hat"},
 		{"edit colon", me + " Edit: add a hat", true, intentEdit, "add a hat"},
 		{"redraw", me + " redraw as a cat", true, intentEdit, "as a cat"},
