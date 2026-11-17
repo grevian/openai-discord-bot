@@ -73,12 +73,11 @@ resource "aws_iam_role_policy" "bot_dynamodb" {
       {
         Sid    = "DDBFlags"
         Effect = "Allow"
+        # Refresh is a Scan. A change is a TransactWriteItems of two puts,
+        # which IAM authorizes as PutItem (there is no TransactWriteItems action).
         Action = [
-          "dynamodb:GetItem",
           "dynamodb:PutItem",
-          "dynamodb:Query",
           "dynamodb:Scan",
-          "dynamodb:TransactWriteItems",
         ]
         Resource = aws_dynamodb_table.flags.arn
       },

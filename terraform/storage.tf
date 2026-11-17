@@ -117,8 +117,10 @@ resource "aws_dynamodb_table" "conversations" {
 # Remote-controllable feature flags (bot/flags). The current value of a flag
 # is at pk=<name>, sk="current"; every change also writes an audit item at
 # pk="audit#<name>", sk=<unix ms>. pk is ready for scoped overrides later
-# (<name>#guild:<id>). The bot runs on code defaults if this table is
-# missing or unreachable, so it is not prevent_destroy.
+# (<name>#guild:<id>). Deletion protection guards against an accidental
+# delete in AWS. There is no prevent_destroy lifecycle as on conversations:
+# the bot runs on code defaults without this table, so terraform may
+# replace it.
 resource "aws_dynamodb_table" "flags" {
   name                        = "${local.name_prefix}-flags"
   billing_mode                = "PAY_PER_REQUEST"

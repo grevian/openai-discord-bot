@@ -64,6 +64,13 @@ func TestDynamoLoadAllReadsCurrentItemsAcrossPages(t *testing.T) {
 	if aws.ToString(ddb.scans[0].TableName) != "flags-tbl" || ddb.scans[0].FilterExpression == nil {
 		t.Fatalf("scan must target the table and filter to current items: %+v", ddb.scans[0])
 	}
+	// An eventually consistent read right after a write could return the
+	// old value and undo the write-through until the next refresh.
+	for i, in := range ddb.scans {
+		if !aws.ToBool(in.ConsistentRead) {
+			t.Errorf("scan page %d is not a consistent read", i)
+		}
+	}
 	want := map[string]Value{
 		"a": {Name: "a", Raw: "true", UpdatedBy: "123", UpdatedAt: at, PrevValue: "false"},
 		"b": {Name: "b", Raw: "7"},
