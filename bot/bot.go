@@ -840,10 +840,8 @@ func (b *AIBot) fetchSourceImage(ctx context.Context, sourceURL string) ([]byte,
 	return srcBytes, nil
 }
 
-// findEditSourceImage returns a URL to an image to be used as the source for an
-// edit, preferring an attachment on the triggering message, then falling back
-// to an attachment on the message it's replying to (if that message came from
-// us). Returns "" when no candidate exists.
+// findEditSourceImage returns just the URL of findEditSource's result, or ""
+// when there is no source image.
 func (b *AIBot) findEditSourceImage(ctx context.Context, m *discordgo.MessageCreate) string {
 	return b.findEditSource(ctx, m).url
 }
@@ -860,8 +858,11 @@ type editSource struct {
 	parentKey string
 }
 
-// findEditSource is findEditSourceImage that also reports whether the source
-// is clean and which archived image it is.
+// findEditSource finds the image an edit starts from. It prefers an image
+// attached to the triggering message, then falls back to one attached to the
+// message it replies to, if the bot wrote that message. Only that bot reply
+// can be clean (it carries the marker) or name its archived image (its upload
+// name, see parentKeyFromUpload). The zero editSource means no candidate.
 func (b *AIBot) findEditSource(ctx context.Context, m *discordgo.MessageCreate) editSource {
 	for _, att := range m.Attachments {
 		if isImageAttachment(att) {
