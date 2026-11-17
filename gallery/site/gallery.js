@@ -146,8 +146,12 @@
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
       if (it && typeof it === 'object' && imageURL(it.key)) {
+        if (typeof it.id === 'string' && it.id) {
+          // A duplicate id renders once: the first one wins.
+          if (it.id in byId) { continue; }
+          byId[it.id] = it;
+        }
         usable.push(it);
-        if (typeof it.id === 'string' && it.id && !(it.id in byId)) { byId[it.id] = it; }
       }
     }
     function rootOf(it) {
@@ -156,8 +160,13 @@
       while (typeof cur.parent === 'string' && cur.parent && byId[cur.parent]) {
         if (seen[cur.id]) {
           // A cycle (corrupt data): every member must agree on one root.
-          var ids = Object.keys(seen).sort();
-          return byId[ids[0]];
+          // Only the cycle's members count, so a tail leading into it shares
+          // the cycle's root.
+          var least = cur;
+          for (var n = byId[cur.parent]; n !== cur; n = byId[n.parent]) {
+            if (n.id < least.id) { least = n; }
+          }
+          return least;
         }
         seen[cur.id] = true;
         cur = byId[cur.parent];

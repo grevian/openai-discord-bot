@@ -112,6 +112,12 @@ assert.deepStrictEqual(ids(api.groupStacks([E('c', { parent: 'b' }), E('b', { pa
 assert.deepStrictEqual(ids(api.groupStacks([E('e', { parent: 'gone' })])), [['e']]);
 assert.deepStrictEqual(ids(api.groupStacks([E('p', { parent: 'q' }), E('q', { parent: 'p' })])).map((s) => s.length), [2]);
 assert.deepStrictEqual(ids(api.groupStacks([E('s', { parent: 's' })])), [['s']]);
+// A tail leading into a cycle shares the cycle's stack, whatever the ids sort like.
+assert.deepStrictEqual(ids(api.groupStacks([E('a', { parent: 'z' }), E('y', { parent: 'z' }), E('z', { parent: 'y' })])).map((s) => s.length), [3]);
+assert.deepStrictEqual(ids(api.groupStacks([E('t', { parent: 'm' }), E('m', { parent: 'n' }), E('n', { parent: 'm' })])).map((s) => s.length), [3]);
+// A duplicate id renders once, keeping the first.
+assert.deepStrictEqual(ids(api.groupStacks([E('d', { prompt: 'first' }), E('d', { prompt: 'second' }), E('e')])), [['d'], ['e']]);
+assert.strictEqual(api.groupStacks([E('d', { prompt: 'first' }), E('d', { prompt: 'second' })])[0][0].prompt, 'first');
 // Unusable entries are dropped, and ids that are not strings never group.
 assert.deepStrictEqual(ids(api.groupStacks([null, { id: 'z', key: 'bad key' }, E('k')])), [['k']]);
 
