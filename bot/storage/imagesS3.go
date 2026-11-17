@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -66,17 +65,15 @@ func (i *ImageStorage) GetImageFromURL(ctx context.Context, URL string) (io.Read
 	return resp.Body, resp.ContentLength, nil
 }
 
-func (i *ImageStorage) StoreImage(ctx context.Context, groupId string, reader io.Reader, contentLength int64) (string, error) {
-	uid, err := ksuid.NewRandomWithTime(time.Now())
-	if err != nil {
-		return "", fmt.Errorf("somehow failed to generate a uid: %w", err)
+func (i *ImageStorage) StoreImage(ctx context.Context, groupId, id string, reader io.Reader, contentLength int64) (string, error) {
+	if _, err := ksuid.Parse(id); err != nil {
+		return "", fmt.Errorf("image id %q is not a ksuid: %w", id, err)
 	}
-
 	if groupId == "" {
 		groupId = "private-chat"
 	}
-	constructedKey := aws.String(groupId + "/" + uid.String())
-	_, err = i.client.PutObject(ctx, &s3.PutObjectInput{
+	constructedKey := aws.String(groupId + "/" + id)
+	_, err := i.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(i.bucketName),
 		Key:           constructedKey,
 		Body:          reader,

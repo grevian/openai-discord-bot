@@ -236,25 +236,25 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 		t.Errorf("safety identifier = %q", req.SafetyIdentifier.Value)
 	}
 
+	stored := tb.imgStore.storedImages()
+	if len(stored) != 1 || stored[0].Group != guildID || stored[0].Length != int64(len(pngBytes)) || !bytes.Equal(stored[0].Data, pngBytes) {
+		t.Fatalf("unexpected S3 uploads %+v", stored)
+	}
+
 	sent := tb.discord.sentMessages()
 	if len(sent) != 1 {
 		t.Fatalf("expected one Discord message, got %+v", sent)
 	}
-	if sent[0].Content != "a picture I drawed" || sent[0].FileName != "danbot-drawing.png" || !bytes.Equal(sent[0].File, pngBytes) {
+	if sent[0].Content != "a picture I drawed" || sent[0].FileName != "danbot-"+stored[0].ID+".png" || !bytes.Equal(sent[0].File, pngBytes) {
 		t.Errorf("unexpected Discord message %+v", sent[0])
 	}
 	if sent[0].Reference == nil || sent[0].Reference.MessageID != m.ID {
 		t.Errorf("the image should reply to the request, got reference %+v", sent[0].Reference)
 	}
 
-	stored := tb.imgStore.storedImages()
-	if len(stored) != 1 || stored[0].Group != guildID || stored[0].Length != int64(len(pngBytes)) || !bytes.Equal(stored[0].Data, pngBytes) {
-		t.Fatalf("unexpected S3 uploads %+v", stored)
-	}
-
 	want := []storedMessage{
 		{channelID, "alice (user-1) on guild-1", "a cat"},
-		{channelID, "Bot", testImageBaseURL + "/guild-1/image-1"},
+		{channelID, "Bot", testImageBaseURL + "/guild-1/" + stored[0].ID},
 	}
 	if got := tb.threads.addedMessages(); !equalStored(got, want) {
 		t.Errorf("stored %+v, want %+v", got, want)

@@ -25,6 +25,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
+	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -331,11 +332,11 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	ctx, stopTyping := b.keepTyping(ctx, responseChannel)
 	defer stopTyping()
 
-	sourceImageURL, sourceIsClean := b.findEditSource(ctx, m)
-	intent, prompt := classifyMessage(m.Content, self.ID, sourceImageURL != "")
+	source := b.findEditSource(ctx, m)
+	intent, prompt := classifyMessage(m.Content, self.ID, source.url != "")
 	// Clean is asked for with 🫧 in the message text (not as a reaction), and
 	// is sticky: an edit of a clean image stays clean.
-	clean := hasCleanEmoji(m.Content) || (intent == intentEdit && sourceIsClean)
+	clean := hasCleanEmoji(m.Content) || (intent == intentEdit && source.clean)
 
 	switch intent {
 	case intentHelp:
@@ -343,7 +344,7 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	case intentEditNoImage:
 		err = b.sendMessage(ctx, responseChannel, msgEditNeedsImage)
 	case intentEdit:
-		err = b.handleImageEditMessage(ctx, responseChannel, prompt, sourceImageURL, clean, threadPromptContext, m)
+		err = b.handleImageEditMessage(ctx, responseChannel, prompt, source, clean, threadPromptContext, m)
 	case intentDraw:
 		err = b.handleImageMessage(ctx, responseChannel, prompt, clean, m)
 	case intentSummarize:
@@ -588,13 +589,16 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 	}
 	logger.DebugContext(ctx, "image retrieval", slog.Int("image_length", len(image)))
 
+	// The Discord upload is named after the archive id, so a later reply to
+	// this message can say which archived image it edits (see findEditSource).
+	id := newImageID()
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		// This goroutine is outside the handler's recover, so it needs its own.
 		defer recoverHandler("archiveImage")
-		b.archiveImage(ctx, span, responseChannel, m.GuildID, image, prompt, kind, origin)
+		b.archiveImage(ctx, span, responseChannel, m.GuildID, id, image, prompt, kind, origin)
 	}()
 
 	opt, cancel := b.discordCtx(ctx)
@@ -602,7 +606,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 		Content:   content,
 		Reference: m.Reference(),
 		File: &discordgo.File{
-			Name:        "danbot-drawing.png",
+			Name:        uploadName(id),
 			ContentType: "image/png",
 			Reader:      bytes.NewReader(image),
 		},
@@ -620,11 +624,11 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 // URL in the thread context. Failures are recorded and logged, not returned:
 // the user already has the image in Discord. Once the image is stored it is
 // also offered to the public gallery.
-func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID string, image []byte, prompt string, kind gallery.Kind, origin editOrigin) {
+func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID, id string, image []byte, prompt string, kind gallery.Kind, origin editOrigin) {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
 	storeCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
-	imageKey, err := b.imageStorage.StoreImage(storeCtx, guildID, bytes.NewReader(image), int64(len(image)))
+	imageKey, err := b.imageStorage.StoreImage(storeCtx, guildID, id, bytes.NewReader(image), int64(len(image)))
 	cancel()
 	if err != nil {
 		span.RecordError(err)
@@ -633,12 +637,11 @@ func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChann
 	}
 
 	b.publishToGallery(ctx, gallery.Submission{
-		GuildID:  guildID,
-		ImageKey: imageKey,
-		Prompt:   b.galleryPrompt(prompt),
-		Kind:     kind,
-		// The source URL is user-supplied: only one of our own keys counts.
-		ParentKey: b.imageKeyFromURL(origin.sourceURL),
+		GuildID:   guildID,
+		ImageKey:  imageKey,
+		Prompt:    b.galleryPrompt(prompt),
+		Kind:      kind,
+		ParentKey: origin.parentKey,
 		Context:   origin.directives,
 	})
 
@@ -671,26 +674,38 @@ func (b *AIBot) publishToGallery(ctx context.Context, s gallery.Submission) {
 	}()
 }
 
-// editOrigin is what an edited image came from: the image it was edited from
-// and the condensed thread directives that went into its prompt. The zero
-// value is a fresh drawing.
+// editOrigin is what an edited image came from: the archive key of the image
+// it was edited from ("" when unknown) and the condensed thread directives
+// that went into its prompt. The zero value is a fresh drawing.
 type editOrigin struct {
-	sourceURL  string
+	parentKey  string
 	directives []string
 }
 
-// imageKeyFromURL returns the archive key ("<guild>/<id>") of a URL under the
-// image base URL, or "" for any other URL.
-func (b *AIBot) imageKeyFromURL(u string) string {
-	base := strings.TrimRight(b.imageBaseURL, "/") + "/"
-	if base == "/" || !strings.HasPrefix(u, base) {
+// newImageID returns a fresh archive id for a generated image.
+func newImageID() string { return ksuid.New().String() }
+
+// uploadName is the file name of a generated image sent to Discord. It
+// carries the image's archive id; parentKeyFromUpload reads it back.
+func uploadName(id string) string { return "danbot-" + id + ".png" }
+
+// parentKeyFromUpload returns the archive key ("<guild>/<id>") of one of the
+// bot's own Discord uploads, from its file name, or "" when the name carries
+// no archive id (such as replies from before uploads were named this way).
+// Only the bot's own messages may be passed: a user can name a file anything.
+func parentKeyFromUpload(guildID, filename string) string {
+	id, ok := strings.CutPrefix(filename, "danbot-")
+	if !ok || guildID == "" {
 		return ""
 	}
-	key := strings.TrimPrefix(u, base)
-	if _, _, ok := gallery.SplitKey(key); !ok {
+	id, ok = strings.CutSuffix(id, ".png")
+	if !ok {
 		return ""
 	}
-	return key
+	if _, err := ksuid.Parse(id); err != nil {
+		return ""
+	}
+	return guildID + "/" + id
 }
 
 // galleryPrompt removes the bot's own mention from a prompt before it is
@@ -706,8 +721,9 @@ func (b *AIBot) galleryPrompt(prompt string) string {
 // handleImageEditMessage takes a prompt and a URL to an existing image and asks
 // OpenAI's image edit endpoint to produce a modified version, then ships it the
 // same way handleImageMessage does for fresh generations.
-func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, prompt, sourceURL string, clean bool, threadContext []storage.ConversationMessage, m *discordgo.MessageCreate) error {
+func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, prompt string, source editSource, clean bool, threadContext []storage.ConversationMessage, m *discordgo.MessageCreate) error {
 	logger := slog.Default().WithGroup("handleImageEditMessage")
+	sourceURL := source.url
 
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageEditMessage")
 	defer span.End()
@@ -782,7 +798,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("here ya go", clean), prompt, gallery.KindEdit, editOrigin{sourceURL: sourceURL, directives: directives}, m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("here ya go", clean), prompt, gallery.KindEdit, editOrigin{parentKey: source.parentKey, directives: directives}, m); err != nil {
 		return err
 	}
 
@@ -824,22 +840,33 @@ func (b *AIBot) fetchSourceImage(ctx context.Context, sourceURL string) ([]byte,
 	return srcBytes, nil
 }
 
-// findEditSourceImage returns a URL to an image to be used as the source for an
-// edit, preferring an attachment on the triggering message, then falling back
-// to an attachment on the message it's replying to (if that message came from
-// us). Returns "" when no candidate exists.
+// findEditSourceImage returns just the URL of findEditSource's result, or ""
+// when there is no source image.
 func (b *AIBot) findEditSourceImage(ctx context.Context, m *discordgo.MessageCreate) string {
-	url, _ := b.findEditSource(ctx, m)
-	return url
+	return b.findEditSource(ctx, m).url
 }
 
-// findEditSource is findEditSourceImage that also reports whether the source
-// is a clean image: one of the bot's own replies that carries the clean marker.
-// An attached image has no marker, so the user adds 🫧 again.
-func (b *AIBot) findEditSource(ctx context.Context, m *discordgo.MessageCreate) (string, bool) {
+// editSource is the image an edit starts from.
+type editSource struct {
+	// url is where to fetch it; "" when there is none.
+	url string
+	// clean is set for one of the bot's own replies that carries the clean
+	// marker. An attached image has no marker, so the user adds 🫧 again.
+	clean bool
+	// parentKey is the archive key of the image, when it is one of the bot's
+	// own replies whose upload name carries it; "" otherwise.
+	parentKey string
+}
+
+// findEditSource finds the image an edit starts from. It prefers an image
+// attached to the triggering message, then falls back to one attached to the
+// message it replies to, if the bot wrote that message. Only that bot reply
+// can be clean (it carries the marker) or name its archived image (its upload
+// name, see parentKeyFromUpload). The zero editSource means no candidate.
+func (b *AIBot) findEditSource(ctx context.Context, m *discordgo.MessageCreate) editSource {
 	for _, att := range m.Attachments {
 		if isImageAttachment(att) {
-			return att.URL, false
+			return editSource{url: att.URL}
 		}
 	}
 
@@ -855,14 +882,16 @@ func (b *AIBot) findEditSource(ctx context.Context, m *discordgo.MessageCreate) 
 		}
 	}
 	if ref == nil || ref.Author == nil || ref.Author.ID != b.discord.BotUser().ID {
-		return "", false
+		return editSource{}
 	}
 	for _, att := range ref.Attachments {
 		if isImageAttachment(att) {
-			return att.URL, hasCleanEmoji(ref.Content)
+			// A reply is in the same guild as the message it answers, and a
+			// fetched message has no guild ID of its own.
+			return editSource{url: att.URL, clean: hasCleanEmoji(ref.Content), parentKey: parentKeyFromUpload(m.GuildID, att.Filename)}
 		}
 	}
-	return "", false
+	return editSource{}
 }
 
 // detectImageType sniffs the leading bytes of an image and returns the MIME

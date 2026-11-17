@@ -288,6 +288,7 @@ func (f *fakeThreadStore) addedMessages() []storedMessage {
 // storedImage is one StoreImage call.
 type storedImage struct {
 	Group  string
+	ID     string
 	Length int64
 	Data   []byte
 }
@@ -324,7 +325,7 @@ func newFakeImageStore() *fakeImageStore {
 	return &fakeImageStore{sources: map[string][]byte{}}
 }
 
-func (f *fakeImageStore) StoreImage(ctx context.Context, group string, r io.Reader, length int64) (string, error) {
+func (f *fakeImageStore) StoreImage(ctx context.Context, group, id string, r io.Reader, length int64) (string, error) {
 	f.log.record("s3.StoreImage", ctx)
 	f.mu.Lock()
 	err, onStore := f.storeErr, f.onStore
@@ -344,8 +345,8 @@ func (f *fakeImageStore) StoreImage(ctx context.Context, group string, r io.Read
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.stored = append(f.stored, storedImage{group, length, data})
-	return fmt.Sprintf("%s/image-%d", group, len(f.stored)), nil
+	f.stored = append(f.stored, storedImage{group, id, length, data})
+	return group + "/" + id, nil
 }
 
 func (f *fakeImageStore) GetImageFromURL(ctx context.Context, url string) (io.ReadCloser, int64, error) {
