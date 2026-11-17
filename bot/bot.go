@@ -735,7 +735,10 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		return newUserError("That image isn't a supported format. Please use png, jpeg or webp. Nothing else ever works out for me anyway.", fmt.Errorf("source image is not a supported format (png/jpeg/webp)"))
 	}
 
-	fullPrompt := buildEditPrompt(prompt, b.editInstructions)
+	// A default edit carries the danbot drawing style as well as the keep
+	// list; a clean one sends neither (see below).
+	guidance := editGuidance(b.drawingInstructions, b.editInstructions)
+	fullPrompt := buildEditPrompt(prompt, guidance)
 	var directives []string
 	if clean {
 		fullPrompt = prompt
@@ -748,7 +751,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		if clean {
 			fullPrompt = buildCleanEditPromptWithContext(prompt, directives)
 		} else {
-			fullPrompt = buildEditPromptWithContext(prompt, directives, b.editInstructions)
+			fullPrompt = buildEditPromptWithContext(prompt, directives, guidance)
 		}
 	}
 

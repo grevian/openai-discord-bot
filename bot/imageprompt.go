@@ -16,9 +16,21 @@ func buildDrawPrompt(scene, styleBlock string) string {
 	return p
 }
 
-// buildEditPrompt states the requested change first and then a short keep
-// list. It deliberately does not reuse the full drawing style block, so an
-// edit stays narrow; the keep list only names what must be preserved.
+// editGuidance is what follows the change in a default (non-clean) edit: the
+// danbot drawing style block, so the result is drawn in the persona's style
+// whatever the source image looks like, then the keep list. Either may be empty.
+func editGuidance(styleBlock, keepList string) string {
+	var parts []string
+	for _, s := range []string{styleBlock, keepList} {
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// buildEditPrompt states the requested change first and then the guidance
+// (see editGuidance): the style block and a short keep list.
 func buildEditPrompt(change, keepList string) string {
 	p := "Edit the input image. Change only: " + strings.TrimSpace(change)
 	if r, _ := utf8.DecodeLastRuneInString(p); !strings.ContainsRune(".?!", r) {

@@ -68,7 +68,7 @@ func TestEditFlagOffMakesNoCondenseCallAndKeepsPrompt(t *testing.T) {
 	if len(tb.images.edited) != 1 {
 		t.Fatalf("expected one Edit call, got %d", len(tb.images.edited))
 	}
-	if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a hat", testEditKeep); got != want {
+	if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a hat", editGuidance(testDrawing, testEditKeep)); got != want {
 		t.Errorf("flag off prompt = %q, want today's %q", got, want)
 	}
 }
@@ -151,7 +151,7 @@ func TestEditFlagOnFallsBackWhenCondenseGivesNothingUsable(t *testing.T) {
 			if len(tb.images.edited) != 1 {
 				t.Fatalf("the edit must still run, got %d Edit calls", len(tb.images.edited))
 			}
-			if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a dog", testEditKeep); got != want {
+			if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a dog", editGuidance(testDrawing, testEditKeep)); got != want {
 				t.Errorf("fallback prompt = %q, want %q", got, want)
 			}
 			sent := tb.discord.sentMessages()
@@ -178,7 +178,7 @@ func TestEditFlagOnFallsBackOnCondenseTimeout(t *testing.T) {
 	if len(tb.images.edited) != 1 {
 		t.Fatalf("the edit must still run, got %d Edit calls", len(tb.images.edited))
 	}
-	if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a dog", testEditKeep); got != want {
+	if got, want := tb.images.edited[0].Prompt, buildEditPrompt("add a dog", editGuidance(testDrawing, testEditKeep)); got != want {
 		t.Errorf("fallback prompt = %q, want %q", got, want)
 	}
 }
@@ -212,7 +212,7 @@ func TestEditFlagOnWithoutThreadHistoryMakesNoCondenseCall(t *testing.T) {
 			if tb.responses.callCount() != 0 {
 				t.Errorf("nothing to condense, got %d calls", tb.responses.callCount())
 			}
-			if len(tb.images.edited) != 1 || tb.images.edited[0].Prompt != buildEditPrompt("add a dog", testEditKeep) {
+			if len(tb.images.edited) != 1 || tb.images.edited[0].Prompt != buildEditPrompt("add a dog", editGuidance(testDrawing, testEditKeep)) {
 				t.Errorf("unexpected edit calls %+v", tb.images.edited)
 			}
 		})
@@ -226,7 +226,7 @@ func TestEditFlagOnOutsideThreadMakesNoCondenseCall(t *testing.T) {
 	if tb.responses.callCount() != 0 {
 		t.Errorf("a plain channel has no thread context, got %d calls", tb.responses.callCount())
 	}
-	if len(tb.images.edited) != 1 || tb.images.edited[0].Prompt != buildEditPrompt("add a dog", testEditKeep) {
+	if len(tb.images.edited) != 1 || tb.images.edited[0].Prompt != buildEditPrompt("add a dog", editGuidance(testDrawing, testEditKeep)) {
 		t.Errorf("unexpected edit calls %+v", tb.images.edited)
 	}
 }
