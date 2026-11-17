@@ -1,0 +1,128 @@
+name: Terraform Plan
+
+# Plan only, never apply. Runs on pull requests that change terraform and posts the
+# plan as a PR comment (updated in place) and in the job summary.
+#
+# Credentials: assumes the read-only plan role (AWS_PLAN_ROLE_TO_ASSUME), not the
+# apply role, and does not use the `production` environment. It uses `pull_request`,
+# not `pull_request_target`, so PR code never runs with the base repo's secrets.
+# Fork PRs get no secrets and no OIDC token, and the job is skipped for them anyway.
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-plan.yml"
+
+env:
+  AWS_REGION: ca-central-1
+
+permissions: {}
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: plan
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_TO_ASSUME }}
+          role-duration-seconds: 1800
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.11.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init -input=false
+
+      # -lock=false: a PR plan must never hold the state lock and block an apply
+      # (or fail because one is running). The plan is advisory and is not applied.
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform
+        continue-on-error: true
+        shell: bash # -e -o pipefail: tee must not hide terraform's exit code
+        run: terraform plan -lock=false -input=false -no-color -out=tfplan 2>&1 | tee plan.log
+
+      - name: Summarise plan
+        id: summary
+        if: always()
+        working-directory: terraform
+        env:
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "<!-- terraform-plan -->"
+            echo "### Terraform plan for ${HEAD_SHA:0:7}"
+            echo
+            if [ "$PLAN_OUTCOME" = "success" ]; then
+              terraform show -no-color tfplan | grep -E '^(Plan:|No changes)' || true
+            else
+              echo "**Plan failed or did not run.**"
+            fi
+            echo
+            echo "<details><summary>Full output</summary>"
+            echo
+            echo '````'
+            # PR comments are capped at 65536 characters
+            if [ -f plan.log ]; then head -c 55000 plan.log; else echo "(no output)"; fi
+            if [ -f plan.log ] && [ "$(wc -c < plan.log)" -gt 55000 ]; then
+              echo
+              echo "... truncated, see the workflow run for the full log"
+            fi
+            echo '````'
+            echo
+            echo "</details>"
+            echo
+            echo "_Plan only: nothing is applied. Run the Terraform workflow to apply after merging._"
+          } > "$RUNNER_TEMP/comment.md"
+          cp "$RUNNER_TEMP/comment.md" "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on PR
+        if: always()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync(`${process.env.RUNNER_TEMP}/comment.md`, 'utf8');
+            const marker = '<!-- terraform-plan -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(c => c.user.type === 'Bot' && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Fail if the plan failed
+        if: steps.plan.outcome == 'failure'
+        run: |
+          echo "::error::terraform plan failed"
+          exit 1
