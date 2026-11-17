@@ -17,6 +17,10 @@ type timeouts struct {
 	Request time.Duration
 	// OpenAIText bounds one Responses API call, including the SDK's retries.
 	OpenAIText time.Duration
+	// OpenAIContext bounds the short text call that condenses thread context
+	// for an image edit. It is kept well under OpenAIText: the edit goes on
+	// without the context when it expires.
+	OpenAIContext time.Duration
 	// OpenAIImage bounds one image generate or edit call, including retries.
 	OpenAIImage time.Duration
 	// Storage bounds one DynamoDB or S3 call, or one source-image fetch.
@@ -37,6 +41,7 @@ func defaultTimeouts() timeouts {
 	return timeouts{
 		Request:       5 * time.Minute,
 		OpenAIText:    90 * time.Second,
+		OpenAIContext: 25 * time.Second,
 		OpenAIImage:   3 * time.Minute,
 		Storage:       30 * time.Second,
 		Discord:       30 * time.Second,

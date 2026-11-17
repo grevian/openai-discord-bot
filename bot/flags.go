@@ -10,8 +10,8 @@ import (
 var flagRegistry = flags.NewRegistry()
 
 // EditThreadContext includes the thread's conversation in image edit
-// prompts. The check is in handleImageEditMessage; the feature itself is not
-// built yet, so for now the flag changes nothing but a span attribute.
+// prompts: a text model condenses the earlier messages into a few directives
+// (see editcontext.go). The check is in handleImageEditMessage.
 var EditThreadContext = flagRegistry.Bool("edit_thread_context", false,
 	"include thread conversation context in image edit prompts")
 
