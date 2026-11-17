@@ -50,7 +50,10 @@ func newDynamoBackend(client dynamoAPI, table string) *DynamoBackend {
 func (d *DynamoBackend) LoadAll(ctx context.Context) (map[string]Value, error) {
 	out := map[string]Value{}
 	in := &dynamodb.ScanInput{
-		TableName:                 aws.String(d.table),
+		TableName: aws.String(d.table),
+		// Consistent, so a refresh just after an owner write can't read the
+		// old value and undo the write-through.
+		ConsistentRead:            aws.Bool(true),
 		FilterExpression:          aws.String("sk = :current"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":current": &types.AttributeValueMemberS{Value: currentSortKey}},
 	}
