@@ -85,6 +85,35 @@ resource "aws_iam_role_policy" "plan_extra" {
           "${aws_dynamodb_table.flags.arn}/index/*",
         ]
       },
+      {
+        # ReadOnlyAccess allows ssm:Get* on every parameter in the account. Limit it
+        # to this app's parameters and the public AMI lookup in ec2.tf.
+        Sid    = "DenySsmOutsideApp"
+        Effect = "Deny"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath",
+          "ssm:GetParameterHistory",
+        ]
+        NotResource = [
+          "arn:aws:ssm:*:${data.aws_caller_identity.current.account_id}:parameter/${local.service}/*",
+          "arn:aws:ssm:*:*:parameter/aws/service/*",
+        ]
+      },
+      {
+        # Log events can contain user messages; plan only needs the group's config.
+        Sid    = "DenyLogEventReads"
+        Effect = "Deny"
+        Action = [
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents",
+          "logs:StartQuery",
+          "logs:GetQueryResults",
+          "logs:StartLiveTail",
+        ]
+        Resource = "*"
+      },
     ]
   })
 }

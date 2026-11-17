@@ -29,7 +29,7 @@ jobs:
     name: plan
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     permissions:
@@ -74,10 +74,11 @@ jobs:
         working-directory: terraform
         env:
           PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           {
             echo "<!-- terraform-plan -->"
-            echo "### Terraform plan for $(git rev-parse --short HEAD)"
+            echo "### Terraform plan for ${HEAD_SHA:0:7}"
             echo
             if [ "$PLAN_OUTCOME" = "success" ]; then
               terraform show -no-color tfplan | grep -E '^(Plan:|No changes)' || true
