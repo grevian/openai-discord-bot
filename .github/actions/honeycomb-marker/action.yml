@@ -1,0 +1,57 @@
+name: Honeycomb marker
+description: >
+  Create a Honeycomb marker for this workflow run. Never fails the job: a
+  missing token (forks, PRs) skips it, an API error logs a warning.
+inputs:
+  token:
+    description: Honeycomb API key with the "Manage Markers" permission (secrets.HONEYCOMB_MARKER_TOKEN)
+    required: false
+    default: ""
+  type:
+    description: Marker type, e.g. deploy, restart, terraform (Honeycomb colours markers by type)
+    required: true
+  message:
+    description: Marker text. Defaults to "<workflow> <short sha> by <actor>"
+    required: false
+    default: ""
+  start-time:
+    description: Unix seconds when the change started; the marker then spans start-time to now
+    required: false
+    default: ""
+  dataset:
+    description: Dataset slug. danbot is where the bot's traces land (service.name=danbot)
+    required: false
+    default: danbot
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        HONEYCOMB_MARKER_TOKEN: ${{ inputs.token }}
+        MARKER_TYPE: ${{ inputs.type }}
+        MARKER_MESSAGE: ${{ inputs.message }}
+        MARKER_START: ${{ inputs.start-time }}
+        MARKER_DATASET: ${{ inputs.dataset }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        WORKFLOW: ${{ github.workflow }}
+        SHA: ${{ github.sha }}
+        ACTOR: ${{ github.actor }}
+      run: |
+        if [ -z "$HONEYCOMB_MARKER_TOKEN" ]; then
+          echo "::notice::No Honeycomb marker token; skipping marker"
+          exit 0
+        fi
+        MSG="${MARKER_MESSAGE:-$WORKFLOW ${SHA:0:7} by $ACTOR}"
+        BODY=$(jq -nc --arg m "$MSG" --arg t "$MARKER_TYPE" --arg u "$RUN_URL" --arg s "$MARKER_START" \
+          '{message:$m, type:$t, url:$u}
+           + (if $s != "" then {start_time:($s|tonumber), end_time:now|floor} else {} end)') || {
+          echo "::warning::could not build the Honeycomb marker body"; exit 0; }
+        # Token goes via a header file so it never shows in a process list
+        if CODE=$(curl -sS -o "$RUNNER_TEMP/marker.out" -w '%{http_code}' --max-time 15 --retry 2 \
+          -H @- -H 'Content-Type: application/json' -d "$BODY" \
+          "https://api.honeycomb.io/1/markers/$MARKER_DATASET" <<< "X-Honeycomb-Team: $HONEYCOMB_MARKER_TOKEN") \
+          && [ "$CODE" -lt 300 ]; then
+          echo "Honeycomb marker created ($MARKER_TYPE): $MSG"
+        else
+          echo "::warning::Honeycomb marker failed (HTTP ${CODE:-none}): $(head -c 300 "$RUNNER_TEMP/marker.out" 2>/dev/null)"
+        fi

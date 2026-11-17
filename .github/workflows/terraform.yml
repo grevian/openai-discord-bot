@@ -25,6 +25,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Record start time
+        id: started
+        run: echo "at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -65,6 +69,14 @@ jobs:
         working-directory: terraform
         run: terraform apply -auto-approve tfplan
 
+      - name: Honeycomb marker
+        if: success()
+        uses: ./.github/actions/honeycomb-marker
+        with:
+          token: ${{ secrets.HONEYCOMB_MARKER_TOKEN }}
+          type: terraform
+          start-time: ${{ steps.started.outputs.at }}
+
   instance-refresh:
     name: instance-refresh
     needs: terraform
@@ -72,6 +84,7 @@ jobs:
     uses: ./.github/workflows/instance-refresh.yml
     secrets:
       AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+      HONEYCOMB_MARKER_TOKEN: ${{ secrets.HONEYCOMB_MARKER_TOKEN }}
     permissions:
       id-token: write
       contents: read

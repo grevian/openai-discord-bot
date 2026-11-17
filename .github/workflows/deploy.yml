@@ -34,6 +34,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Record start time
+        id: started
+        run: echo "at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -122,3 +126,11 @@ jobs:
             --instance-id "$INSTANCE_ID" \
             --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
             --output json
+
+      - name: Honeycomb marker
+        if: success()
+        uses: ./.github/actions/honeycomb-marker
+        with:
+          token: ${{ secrets.HONEYCOMB_MARKER_TOKEN }}
+          type: deploy
+          start-time: ${{ steps.started.outputs.at }}

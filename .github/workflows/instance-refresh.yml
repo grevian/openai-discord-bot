@@ -10,6 +10,8 @@ on:
     secrets:
       AWS_ROLE_TO_ASSUME:
         required: true
+      HONEYCOMB_MARKER_TOKEN:
+        required: false
 
 permissions: {}
 
@@ -33,6 +35,15 @@ jobs:
       contents: read
 
     steps:
+      # Only the local marker action is needed from the repo
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
+
+      - name: Record start time
+        id: started
+        run: echo "at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -109,3 +120,12 @@ jobs:
             fi
             sleep 20
           done
+
+      - name: Honeycomb marker
+        if: success()
+        uses: ./.github/actions/honeycomb-marker
+        with:
+          token: ${{ secrets.HONEYCOMB_MARKER_TOKEN }}
+          type: restart
+          start-time: ${{ steps.started.outputs.at }}
+          message: Instance refresh (bot restarted) ${{ github.workflow }} by ${{ github.actor }}
