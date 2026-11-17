@@ -303,6 +303,24 @@ func TestCondenseSourceDropsBotAndURLOnlyMessages(t *testing.T) {
 	}
 }
 
+func TestCondenseSourceStripsEditRecordPrefix(t *testing.T) {
+	got := condenseSource([]storage.ConversationMessage{
+		{Role: "user", Content: "edit: make the sky green (source: " + testImageBaseURL + "/guild-1/image-1)"},
+		{Role: "user", Content: "Edit:   add a moon"},
+		{Role: "user", Content: "User: edit: wear a scarf"},
+		{Role: "user", Content: "User: edit the colours later"},
+	})
+	want := []string{"make the sky green", "add a moon", "wear a scarf", "edit the colours later"}
+	if len(got) != len(want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("message %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestParseDirectives(t *testing.T) {
 	if got := parseDirectives("NONE"); got != nil {
 		t.Errorf("NONE should give nothing, got %q", got)

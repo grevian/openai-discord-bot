@@ -67,6 +67,16 @@ var (
 	bulletMarker = regexp.MustCompile(`^(?:[-*•]+|\d+[.)])\s*`)
 )
 
+// recordPrefix matches the label the thread store puts in front of a user
+// message ("User:") and the one on an earlier edit record ("edit:"), in any
+// letter case, so only the request itself is read.
+var recordPrefix = regexp.MustCompile(`(?i)^\s*(?:(?:user|edit)\s*:\s*)+`)
+
+// stripRecordPrefix removes those labels from the start of a stored message.
+func stripRecordPrefix(s string) string {
+	return strings.TrimSpace(recordPrefix.ReplaceAllString(s, ""))
+}
+
 // condenseSource picks the thread text the condense pass reads: user messages
 // only (bot replies are persona chatter and bare image URLs), links removed,
 // the newest maxCondenseMessages within maxCondenseChars, oldest first.
@@ -78,7 +88,7 @@ func condenseSource(thread []storage.ConversationMessage) []string {
 		}
 		text := sourceSuffix.ReplaceAllString(msg.Content, "")
 		text = strings.TrimSpace(urlPattern.ReplaceAllString(text, ""))
-		text = strings.TrimSpace(strings.TrimPrefix(text, "User:"))
+		text = stripRecordPrefix(text)
 		if text == "" {
 			continue
 		}
