@@ -145,32 +145,54 @@ func TestReplyChainWalkIsBounded(t *testing.T) {
 	}
 }
 
-// A chain that loops back on itself (or a failed fetch) ends the walk
-// instead of looping or failing the edit.
-func TestReplyChainStopsOnCycleOrFetchFailure(t *testing.T) {
-	for _, name := range []string{"cycle", "missing"} {
-		t.Run(name, func(t *testing.T) {
-			tb, _ := replyChainBot(t, true)
-			tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
-				return textResponse("NONE"), nil
-			}
-			last := chainMessages(tb, "draw me a picture of a cat", "edit: a hat")
-			first := tb.discord.messages["u0"]
-			if name == "cycle" {
-				first.MessageReference = last.Reference()
-			} else {
-				first.MessageReference = &discordgo.MessageReference{ChannelID: channelID, MessageID: "gone"}
-			}
+// A chain that loops back on itself ends the walk at the first message seen
+// twice: each earlier message is fetched once and each request read once.
+func TestReplyChainStopsOnCycle(t *testing.T) {
+	tb, _ := replyChainBot(t, true)
+	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+		return textResponse("NONE"), nil
+	}
+	last := chainMessages(tb, "draw me a picture of a cat", "edit: a hat")
+	tb.discord.messages["u0"].MessageReference = last.Reference()
 
-			tb.bot.handleMessage(context.Background(), replyTo(last, "edit: add a dog"))
+	tb.bot.handleMessage(context.Background(), replyTo(last, "edit: add a dog"))
 
-			if len(tb.images.edited) != 1 {
-				t.Fatalf("the edit should still run, got %d Edit calls", len(tb.images.edited))
-			}
-			if n := len(tb.discord.fetched); n > maxReplyChainMessages {
-				t.Errorf("fetched %d messages", n)
-			}
-		})
+	if len(tb.images.edited) != 1 {
+		t.Fatalf("the edit should still run, got %d Edit calls", len(tb.images.edited))
+	}
+	// b1 is inlined; u1, b0 and u0 are fetched; u0's reference (b1) is seen.
+	if got := tb.discord.fetched; len(got) != 3 {
+		t.Errorf("fetched %v, want u1, b0 and u0 once each", got)
+	}
+	in := condenseInput(t, tb.responses.calls[0])
+	for _, req := range []string{"a cat", "a hat"} {
+		if n := strings.Count(in, req); n != 1 {
+			t.Errorf("%q appears %d times in the condense input, want once: %q", req, n, in)
+		}
+	}
+}
+
+// A fetch that fails ends the walk; what was read so far is still used and
+// the edit still runs.
+func TestReplyChainStopsOnFetchFailure(t *testing.T) {
+	tb, _ := replyChainBot(t, true)
+	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+		return textResponse("NONE"), nil
+	}
+	last := chainMessages(tb, "draw me a picture of a cat", "edit: a hat")
+	tb.discord.messages["u0"].MessageReference = &discordgo.MessageReference{ChannelID: channelID, MessageID: "gone"}
+
+	tb.bot.handleMessage(context.Background(), replyTo(last, "edit: add a dog"))
+
+	if len(tb.images.edited) != 1 {
+		t.Fatalf("the edit should still run, got %d Edit calls", len(tb.images.edited))
+	}
+	if got := tb.discord.fetched; len(got) != 4 {
+		t.Errorf("fetched %v, want u1, b0, u0 and the missing one", got)
+	}
+	in := condenseInput(t, tb.responses.calls[0])
+	if !strings.Contains(in, "a cat") || !strings.Contains(in, "a hat") {
+		t.Errorf("the requests read before the failure should be used: %q", in)
 	}
 }
 
