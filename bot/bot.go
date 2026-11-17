@@ -761,8 +761,14 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	}
 	if useThreadContext {
 		// threadContext was loaded before this edit was recorded, so it holds
-		// only earlier messages (and is empty outside a thread).
-		directives = b.editDirectives(ctx, threadContext, prompt)
+		// only earlier messages (and is empty outside a thread). Outside a
+		// thread, a reply chain of requests serves the same purpose.
+		history := threadContext
+		if len(history) == 0 && source.reply != nil {
+			history = b.replyChain(ctx, source.reply)
+			span.SetAttributes(attribute.Int("edit_context.reply_chain", len(history)))
+		}
+		directives = b.editDirectives(ctx, history, prompt)
 		span.SetAttributes(attribute.Int("edit_context.directives", len(directives)))
 		if clean {
 			fullPrompt = buildCleanEditPromptWithContext(prompt, directives)
@@ -859,6 +865,10 @@ type editSource struct {
 	// parentKey is the archive key of the image, when it is one of the bot's
 	// own replies whose upload name carries it; "" otherwise.
 	parentKey string
+	// reply is the bot's own message the image came from, when the edit
+	// replies to it; nil for an attached image. Its reply chain can stand in
+	// for thread context (see replyChain).
+	reply *discordgo.Message
 }
 
 // findEditSource finds the image an edit starts from. It prefers an image
@@ -891,7 +901,7 @@ func (b *AIBot) findEditSource(ctx context.Context, m *discordgo.MessageCreate) 
 		if isImageAttachment(att) {
 			// A reply is in the same guild as the message it answers, and a
 			// fetched message has no guild ID of its own.
-			return editSource{url: att.URL, clean: hasCleanEmoji(ref.Content), parentKey: parentKeyFromUpload(m.GuildID, att.Filename)}
+			return editSource{url: att.URL, clean: hasCleanEmoji(ref.Content), parentKey: parentKeyFromUpload(m.GuildID, att.Filename), reply: ref}
 		}
 	}
 	return editSource{}

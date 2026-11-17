@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"openai-discord-bot/bot/storage"
 
+	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
@@ -28,6 +30,10 @@ const (
 	maxCondenseChars = 2000
 	// maxCondenseOutputTokens bounds the reply, reasoning included.
 	maxCondenseOutputTokens = 800
+	// maxReplyChainMessages is how many messages of a reply chain are read,
+	// bot replies included: about maxCondenseMessages user requests. Each
+	// one past the first may cost a Discord fetch.
+	maxReplyChainMessages = 2 * maxCondenseMessages
 
 	// maxDirectives, maxDirectiveChars and maxDirectivesChars cap the
 	// directives that reach the image prompt.
@@ -215,3 +221,51 @@ func buildEditPromptWithContext(change string, directives []string, keepList str
 // editContextHeading introduces the directives in the edit prompt. The change
 // above it wins on any conflict.
 const editContextHeading = "Earlier directives from this conversation that still apply (the change above wins on any conflict):"
+
+// replyChain returns the user requests in the chain of replies that ends at
+// reply (the bot message an edit answers), oldest first, as thread records
+// for condenseSource: the stand-in for thread context outside a thread. Each
+// request is its prompt as classifyMessage reads it, without the bot's
+// mention or triggers. It reads at most maxReplyChainMessages messages, all
+// within one Discord call's deadline, and stops early at the chain's start,
+// a message it has already seen, or a fetch that fails.
+func (b *AIBot) replyChain(ctx context.Context, reply *discordgo.Message) []storage.ConversationMessage {
+	ctx, cancel := withTimeout(ctx, b.timeouts.Discord)
+	defer cancel()
+	botID := b.discord.BotUser().ID
+	seen := map[string]bool{}
+	var newestFirst []storage.ConversationMessage
+	msg := reply
+	for range maxReplyChainMessages {
+		if msg == nil || (msg.ID != "" && seen[msg.ID]) {
+			break
+		}
+		seen[msg.ID] = true
+		if msg.Author != nil && msg.Author.ID != botID {
+			_, text := classifyMessage(msg.Content, botID, true)
+			if text = strings.TrimSpace(text); text != "" {
+				newestFirst = append(newestFirst, storage.ConversationMessage{Role: "user", Content: text})
+			}
+		}
+		next := msg.ReferencedMessage
+		if next == nil && msg.MessageReference != nil && msg.MessageReference.MessageID != "" {
+			if seen[msg.MessageReference.MessageID] {
+				break
+			}
+			channel := msg.MessageReference.ChannelID
+			if channel == "" {
+				channel = msg.ChannelID
+			}
+			fetched, err := b.discord.ChannelMessage(channel, msg.MessageReference.MessageID, discordgo.WithContext(ctx))
+			if err != nil {
+				slog.Default().WithGroup("handleImageEditMessage").WarnContext(ctx,
+					"could not fetch an earlier message of the reply chain", slog.Any("error", err))
+				break
+			}
+			next = fetched
+		}
+		msg = next
+	}
+	slices.Reverse(newestFirst)
+	return newestFirst
+}
