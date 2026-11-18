@@ -179,11 +179,19 @@ OWNER_USER_ID=$(get owner_user_id) || OWNER_USER_ID=""
 if [ "$OWNER_USER_ID" = "populated-out-of-band" ]; then OWNER_USER_ID=""; fi
 
 # An EnvironmentFile line ends at a newline and gives quotes, backslashes and
-# a leading # a meaning, so only plain token characters are written.
-for v in DISCORD_TOKEN OPENAI_TOKEN KAGI_API_KEY OWNER_USER_ID; do
+# a leading # a meaning, so only plain token characters are written. A required
+# secret with other characters stops the start; an optional value is dropped
+# with a warning (that feature stays off) instead of keeping the bot down.
+for v in DISCORD_TOKEN OPENAI_TOKEN; do
   if ! [[ "$${!v}" =~ ^[A-Za-z0-9._~+/=-]*$ ]]; then
     echo "danbot-prepare: $v holds characters outside [A-Za-z0-9._~+/=-]; not writing it" >&2
     exit 1
+  fi
+done
+for v in KAGI_API_KEY OWNER_USER_ID; do
+  if ! [[ "$${!v}" =~ ^[A-Za-z0-9._~+/=-]*$ ]]; then
+    echo "danbot-prepare: WARNING: optional $v holds characters outside [A-Za-z0-9._~+/=-]; leaving it unset" >&2
+    printf -v "$v" '%s' ""
   fi
 done
 
@@ -286,7 +294,7 @@ Environment=OTEL_EXPORTER_OTLP_INSECURE=true
 Environment=GOMEMLIMIT=64MiB
 TimeoutStartSec=300
 TimeoutStopSec=45
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 NoNewPrivileges=yes

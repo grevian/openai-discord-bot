@@ -90,7 +90,22 @@ jobs:
             echo "::error::bucket $ARTIFACTS_BUCKET does not exist yet: run the Terraform workflow, then re-run this workflow"
             exit 1
           fi
-          if EXISTING=$(aws s3 cp "s3://$ARTIFACTS_BUCKET/$KEY.sha256" - 2>/dev/null | awk '{ print $1 }') && [ -n "$EXISTING" ]; then
+          # exists KEY: 0 if the object exists, 1 only on a 404; anything else
+          # (throttling, network, AccessDenied) fails the job, so an error can
+          # never look like "absent" and bypass the never-overwrite check.
+          exists() {
+            local err="$RUNNER_TEMP/head-object.err"
+            if aws s3api head-object --bucket "$ARTIFACTS_BUCKET" --key "$1" > /dev/null 2> "$err"; then
+              return 0
+            fi
+            if grep -qE '\(404\)|Not Found' "$err"; then
+              return 1
+            fi
+            echo "::error::head-object s3://$ARTIFACTS_BUCKET/$1 failed: $(cat "$err")"
+            exit 1
+          }
+          if exists "$KEY.sha256"; then
+            EXISTING=$(aws s3 cp "s3://$ARTIFACTS_BUCKET/$KEY.sha256" - | awk '{ print $1 }')
             if [ "$EXISTING" = "$SHA" ]; then
               echo "s3://$ARTIFACTS_BUCKET/$KEY already holds sha256 $SHA; nothing to do"
               exit 0
@@ -156,7 +171,7 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --targets "Key=tag:App,Values=openai-discord-bot" \
             --comment "Deploy ${{ github.sha }}" \
-            --parameters 'commands=["systemctl restart bot","sleep 10","systemctl is-active bot","journalctl -u bot -o cat --since -2min | grep danbot-prepare | tail -n 1 || true"]' \
+            --parameters 'commands=["set -e","systemctl restart bot","sleep 10","systemctl is-active bot","journalctl -u bot -o cat --since -2min | grep danbot-prepare | tail -n 1"]' \
             --query "Command.CommandId" \
             --output text)
           echo "Command: $CMD_ID"
