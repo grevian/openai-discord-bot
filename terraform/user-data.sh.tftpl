@@ -103,22 +103,15 @@ echo "installed otelcol-danbot $VERSION"
 INSTALL_EOF
 chmod 0755 /usr/local/bin/otelcol-install.sh
 
-# The bot runs as the native static binary from the artifacts bucket (built by
-# deploy.yml), not in a container. Layout:
-#   /opt/danbot/releases/<git sha>/{danbot,prompts/}   one directory per release
-#   /opt/danbot/current -> releases/<git sha>          what bot.service runs
-# The bot reads prompts/danbo.json relative to its working directory, so the
-# unit's WorkingDirectory is /opt/danbot/current.
+# The bot is the native binary from the artifacts bucket (deploy.yml):
+# /opt/danbot/releases/<git sha>/{danbot,prompts/}, /opt/danbot/current -> one.
 id danbot >/dev/null 2>&1 || useradd --system --home-dir /opt/danbot --no-create-home --shell /sbin/nologin danbot
 install -d -m 0755 -o root -g root /opt/danbot /opt/danbot/releases
 
-# danbot-prepare.sh runs as root before every start of bot.service
-# (ExecStartPre=+), so `systemctl restart bot` is the deploy: it installs the
-# release named by the image_tag SSM parameter (the git sha deploy.yml wrote)
-# and refreshes the secrets file. The releases are root-owned and read-only to
-# the bot's user. Secrets go into /run/danbot/bot.env (tmpfs, root 0600), which
-# systemd reads for the unit's EnvironmentFile; they are never in the unit,
-# the command line or this script. No `set -x` here: it would log them.
+# danbot-prepare.sh (root, ExecStartPre=+) runs before every start, so
+# `systemctl restart bot` is the deploy: it installs the release named by the
+# image_tag SSM parameter and writes the secrets to /run/danbot/bot.env (tmpfs,
+# root 0600, the unit's EnvironmentFile). No `set -x`: it would log them.
 cat > /usr/local/bin/danbot-prepare.sh <<EOF
 #!/bin/bash
 set -euo pipefail
@@ -127,10 +120,7 @@ REGION="$REGION"
 PARAM_PREFIX="$PARAM_PREFIX"
 EOF
 cat >> /usr/local/bin/danbot-prepare.sh <<'PREPARE_EOF'
-# This script runs inside bot.service's execution context, so the unit's
-# UMask=0077 applies to it: without this, tar unpacks the release as 0700
-# and the danbot user can't run it. Secrets are written under their own
-# umask 077 below.
+# Runs under the unit's UMask=0077: without this the release unpacks as 0700.
 umask 022
 ARTIFACT_FILE=danbot-linux-arm64.tar.gz
 KEEP_RELEASES=3
@@ -263,16 +253,9 @@ RestartSec=10
 WantedBy=multi-user.target
 UNIT_EOF
 
-# Sandboxing notes (systemd.exec(5)): ProtectSystem=strict makes the whole file
-# system read-only to the bot, which writes nothing local (state is in
-# DynamoDB and S3; the Go runtime needs only /tmp, which PrivateTmp gives it).
-# The ExecStartPre=+ script runs outside this sandbox, as root. The
-# AF_INET/AF_INET6 sockets cover Discord, OpenAI, AWS and the collector on
-# 127.0.0.1:4317/4318 (IMDS is plain IPv4 too); AF_NETLINK is for Go's net
-# package. A blocked system call fails with EPERM instead of killing the bot. The unit has no secrets: those
-# are in EnvironmentFile (written by danbot-prepare.sh).
-# TimeoutStopSec matches the shutdown budget in shutdown.go: SIGTERM, then
-# SIGKILL after 45s.
+# The sandbox leaves the bot read-write only to a private /tmp (state is in
+# DynamoDB and S3) and allows IP, unix and netlink sockets. A blocked syscall
+# returns EPERM. TimeoutStopSec=45 matches the shutdown budget in shutdown.go.
 cat > /etc/systemd/system/bot.service <<'UNIT_EOF'
 [Unit]
 Description=OpenAI Discord Bot (danbot)
@@ -283,10 +266,7 @@ Wants=otel-collector.service network-online.target
 Type=simple
 User=danbot
 Group=danbot
-# The "-" matters: systemd changes into the working directory before it runs
-# ExecStartPre= too, and /opt/danbot/current is only created by that script on
-# the first start. Without it the first start fails at step CHDIR. ExecStart
-# changes directory again, by then into the release.
+# "-": systemd enters this before ExecStartPre= creates it (first start).
 WorkingDirectory=-/opt/danbot/current
 ExecStartPre=+/usr/local/bin/danbot-prepare.sh
 ExecStart=/opt/danbot/current/danbot
@@ -299,8 +279,7 @@ Environment=AI_DISCORD_BOT_CONVERSATIONS_NAME=${conversations_tbl}
 Environment=BOT_FLAGS_TABLE=${flags_tbl}
 Environment=OTEL_SERVICE_NAME=danbot
 Environment=OTEL_EXPORTER_OTLP_INSECURE=true
-# Soft memory limit for the Go runtime (the instance has 1 GiB shared with
-# the collector). A Dockerfile ENV does not apply to the native process.
+# Go soft memory limit (a Dockerfile ENV doesn't reach the native process).
 Environment=GOMEMLIMIT=64MiB
 TimeoutStartSec=300
 TimeoutStopSec=45
