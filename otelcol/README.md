@@ -48,10 +48,11 @@ the Terraform workflow, which replaces the instance.
 
 ## On the instance
 
-`terraform/user-data.sh.tftpl` fetches the pinned version with
-`fetch-artifact` (it checks the `.sha256` next to the object and the
-`otelcol_sha256` terraform variable), installs it as
-`/usr/local/bin/otelcol-danbot`, and runs it as `otel-collector.service`
+`terraform/user-data.sh.tftpl` sets up `otel-collector.service`. Before every
+start, `otelcol-install.sh` (as root) makes sure `/usr/local/bin/otelcol-danbot`
+is the pinned version: if not, it fetches it with `fetch-artifact`, which
+checks the `.sha256` next to the object and the `otelcol_sha256` terraform
+variable. So a failed fetch is retried on every restart. The collector runs as `otel-collector.service`
 under its own `otelcol` user, with the `systemd-journal` group for the journald
 receiver. `otelcol-env.sh` (run as root before each start) puts the Honeycomb
 key from SSM into `/run/otelcol/env`. Memory: `GOMEMLIMIT=80MiB`,
