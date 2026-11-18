@@ -293,7 +293,8 @@ Environment=OTEL_EXPORTER_OTLP_INSECURE=true
 # Go soft memory limit (a Dockerfile ENV doesn't reach the native process).
 Environment=GOMEMLIMIT=64MiB
 # Cgroup limits sized for a 512 MiB t4g.nano (with the collector's 128M and
-# ~90 MiB for the OS). No swap for the services (MemorySwapMax=0).
+# ~90 MiB for the OS). Bot idle ~42 MiB; its ExecStartPre aws cli ~57 MiB.
+# No swap for the services (MemorySwapMax=0).
 MemoryHigh=144M
 MemoryMax=176M
 MemorySwapMax=0

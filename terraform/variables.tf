@@ -1,7 +1,7 @@
 variable "instance_type" {
-  description = "EC2 instance type for the bot. ARM/Graviton. t4g.micro (1 GiB). A t4g.nano (512 MiB) failed twice: 2026-11-06 with otelcol-contrib 0.164 (~212 MiB), and 2026-11-18 when the kernel OOM-killed `dnf update -y` (anon RSS ~163 MiB) in user-data on first boot, so the bot was never installed. Before retrying a nano, take `dnf update` out of the boot path or bake it into the image."
+  description = "EC2 instance type for the bot. ARM/Graviton. t4g.nano (512 MiB) with a 1 GiB swapfile created before `dnf update -y` in user-data (see user-data.sh.tftpl). The first nano attempts failed: 2026-11-06 (otelcol-contrib 0.164, ~212 MiB) and 2026-11-18 (the kernel OOM-killed `dnf update -y`, anon RSS ~163 MiB, before there was swap). To go back, set this to t4g.micro (1 GiB)."
   type        = string
-  default     = "t4g.micro"
+  default     = "t4g.nano"
 }
 
 # The collector is the minimal ocb build from otelcol/, uploaded by the
