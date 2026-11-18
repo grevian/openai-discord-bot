@@ -127,6 +127,11 @@ REGION="$REGION"
 PARAM_PREFIX="$PARAM_PREFIX"
 EOF
 cat >> /usr/local/bin/danbot-prepare.sh <<'PREPARE_EOF'
+# This script runs inside bot.service's execution context, so the unit's
+# UMask=0077 applies to it: without this, tar unpacks the release as 0700
+# and the danbot user can't run it. Secrets are written under their own
+# umask 077 below.
+umask 022
 ARTIFACT_FILE=danbot-linux-arm64.tar.gz
 KEEP_RELEASES=3
 
@@ -154,11 +159,12 @@ if [ ! -x "$REL/danbot" ]; then
     exit 1
   fi
   chown -R root:root "$STAGE"
-  chmod -R go-w "$STAGE"
-  chmod 0755 "$STAGE"
   rm -rf "$REL"
   mv -T "$STAGE" "$REL"
 fi
+# Root-owned, readable and runnable by the bot's user, writable by nobody
+# else. Done on every start so a release installed with other modes is fixed.
+chmod -R u=rwX,go=rX "$REL"
 ln -sfn "$REL" /opt/danbot/current.new
 mv -T /opt/danbot/current.new /opt/danbot/current
 

@@ -50,7 +50,9 @@ jobs:
           echo "== collector log"; journalctl -u otel-collector.service -n 40 --no-pager -o short-iso | cut -c1-300
           echo "== bot unit"; systemctl show bot.service -p ExecMainStartTimestamp -p NRestarts -p MemoryCurrent -p User -p MainPID || true
           echo "== bot release"; readlink /opt/danbot/current; ls -l /opt/danbot/releases 2>&1 || true
-          echo "== bot log (prepare, warnings and errors only)"; journalctl -u bot.service -n 200 --no-pager -o cat | grep -E "danbot-prepare|ERROR|WARN" | tail -n 15 | cut -c1-300 || true
+          echo "== bot WARN/ERROR lines in the last 200 (count only: the bot log can hold user text)"; journalctl -u bot.service -n 200 --no-pager -o cat | grep -acE "ERROR|WARN" || true
+          echo "== bot unit state"; systemctl show bot.service -p ActiveState -p SubState -p Result -p ExecMainStatus -p ExecMainCode -p NRestarts || true
+          echo "== bot start log (prepare lines and systemd own lines only)"; journalctl -u bot.service --no-pager -o cat | grep -a "^danbot-prepare:" | tail -n 5 | cut -c1-200; journalctl -u bot.service _COMM=systemd -n 20 --no-pager -o short-iso | cut -c1-250
           echo "== bot sandbox"; systemd-analyze security bot.service --no-pager 2>&1 | tail -n 2 || true
           echo "== bot container (legacy)"; if command -v docker >/dev/null; then docker ps --format "{{.Names}} {{.Status}} {{.Image}}"; else echo "docker not installed"; fi
           ' '{commands: ($s | split("\n"))}')
