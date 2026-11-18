@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Shutdown time budget. bot.service runs `docker stop -t 45 bot` and the
-// container has --stop-timeout 45, so Docker sends SIGKILL 45s after SIGTERM.
+// Shutdown time budget. bot.service has TimeoutStopSec=45, so systemd sends
+// SIGKILL 45s after SIGTERM.
 // Every step below is a ceiling, not a delay: each returns as soon as its work
 // is done, so an idle bot exits in well under a second.
 //

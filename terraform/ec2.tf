@@ -31,10 +31,9 @@ resource "aws_launch_template" "bot" {
   }
 
   # IMDSv2 only (a plain GET, as an SSRF would send, gets 401), and a token
-  # can't cross a router hop. Hop limit 1 is enough because the bot container
-  # runs with --network host, so its own SDK calls are one hop like the host's
-  # (otel collector, aws cli in start-bot.sh). A container on a bridge network
-  # could not get a token: moving the bot off --network host needs 2 again.
+  # can't cross a router hop. Hop limit 1 is enough because everything that
+  # needs a token (the bot, the otel collector, the aws cli in the start
+  # scripts) runs directly on the host, not in a container behind a bridge.
   metadata_options {
     http_tokens                 = "required"
     http_endpoint               = "enabled"
@@ -45,7 +44,6 @@ resource "aws_launch_template" "bot" {
     region            = data.aws_region.current.region
     service           = local.service
     environment       = local.environment
-    image_repo        = local.image_repo
     images_bucket     = aws_s3_bucket.images.id
     conversations_tbl = aws_dynamodb_table.conversations.id
     flags_tbl         = aws_dynamodb_table.flags.id

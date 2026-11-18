@@ -9,6 +9,12 @@ on:
 env:
   AWS_REGION: ca-central-1
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/openai-discord-bot
+  # The bot runs as a native binary from the private artifacts bucket
+  # (terraform/artifacts.tf); the image above is still published.
+  ARTIFACTS_BUCKET: openai-discord-bot-prod-artifacts
+  RELEASE_NAME: danbot
+  RELEASE_FILE: danbot-linux-arm64.tar.gz
+  # Holds the git sha the instance runs (the name predates the native binary)
   SSM_IMAGE_TAG_PARAM: /openai-discord-bot/prod/image_tag
   SSM_KAGI_API_KEY_PARAM: /openai-discord-bot/prod/kagi_api_key
 
@@ -64,6 +70,46 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           role-duration-seconds: 1800
 
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Same ldflags as the Dockerfile (deploy.version = git sha). The tarball
+      # is deterministic, so a re-run of the same commit builds the same bytes.
+      - name: Build bot binary
+        run: scripts/build-release.sh "${{ github.sha }}" arm64
+
+      # artifacts/<name>/<git sha>/<file> with <file>.sha256 next to it, which
+      # the instance checks on every start (fetch-artifact in user-data). A
+      # version is never overwritten: a re-run that built other bytes fails.
+      - name: Upload bot binary to S3
+        run: |
+          KEY="artifacts/$RELEASE_NAME/${{ github.sha }}/$RELEASE_FILE"
+          SHA=$(awk '{ print $1 }' "dist/$RELEASE_FILE.sha256")
+          if ! aws s3api head-bucket --bucket "$ARTIFACTS_BUCKET" 2>/dev/null; then
+            echo "::error::bucket $ARTIFACTS_BUCKET does not exist yet: run the Terraform workflow, then re-run this workflow"
+            exit 1
+          fi
+          if EXISTING=$(aws s3 cp "s3://$ARTIFACTS_BUCKET/$KEY.sha256" - 2>/dev/null | awk '{ print $1 }') && [ -n "$EXISTING" ]; then
+            if [ "$EXISTING" = "$SHA" ]; then
+              echo "s3://$ARTIFACTS_BUCKET/$KEY already holds sha256 $SHA; nothing to do"
+              exit 0
+            fi
+            echo "::error::s3://$ARTIFACTS_BUCKET/$KEY exists with sha256 $EXISTING, this build is $SHA. Versions are never overwritten."
+            exit 1
+          fi
+          # Binary first, checksum last: a fetch never sees a .sha256 for a
+          # file that is not there yet.
+          aws s3 cp --only-show-errors "dist/$RELEASE_FILE" "s3://$ARTIFACTS_BUCKET/$KEY"
+          aws s3 cp --only-show-errors "dist/$RELEASE_FILE.sha256" "s3://$ARTIFACTS_BUCKET/$KEY.sha256"
+          echo "Uploaded s3://$ARTIFACTS_BUCKET/$KEY (sha256 $SHA)"
+          {
+            echo "### Bot binary ${{ github.sha }}"
+            echo
+            echo "- key: \`$KEY\`"
+            echo "- sha256: \`$SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Update image tag in SSM
         run: |
           aws ssm put-parameter \
@@ -72,7 +118,7 @@ jobs:
             --type String \
             --overwrite
 
-      # The bot reads the key from SSM when it starts (start-bot.sh), so this
+      # The bot reads the key from SSM when it starts (danbot-prepare.sh), so this
       # runs before the restart. The parameter itself is created by terraform.
       - name: Sync Kagi API key to SSM
         env:
@@ -110,7 +156,7 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --targets "Key=tag:App,Values=openai-discord-bot" \
             --comment "Deploy ${{ github.sha }}" \
-            --parameters 'commands=["systemctl restart bot"]' \
+            --parameters 'commands=["systemctl restart bot","sleep 10","systemctl is-active bot","journalctl -u bot -o cat --since -2min | grep danbot-prepare | tail -n 1 || true"]' \
             --query "Command.CommandId" \
             --output text)
           echo "Command: $CMD_ID"

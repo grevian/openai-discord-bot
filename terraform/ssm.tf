@@ -44,7 +44,7 @@ resource "aws_ssm_parameter" "kagi_api_key" {
 
 resource "aws_ssm_parameter" "image_tag" {
   name        = "/${local.service}/${local.environment}/image_tag"
-  description = "Container image tag the bot instance pulls. Updated by GHA on each deploy."
+  description = "Git sha of the release the bot instance runs: artifacts/danbot/<sha>/ in the artifacts bucket (and the image tag of the same sha). Updated by GHA on each deploy. The name predates the native binary."
   type        = "String"
   value       = "latest"
 
