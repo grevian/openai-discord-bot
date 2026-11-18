@@ -134,12 +134,32 @@ jobs:
             echo "::error::bucket $ARTIFACTS_BUCKET does not exist yet: run the Terraform workflow, then re-run this workflow"
             exit 1
           fi
-          if EXISTING=$(aws s3 cp "s3://$ARTIFACTS_BUCKET/$KEY.sha256" - 2>/dev/null | awk '{ print $1 }') && [ -n "$EXISTING" ]; then
+          # exists KEY: 0 if the object exists, 1 only on a 404; anything
+          # else (throttling, network, AccessDenied) fails the job, so an
+          # error can never look like "absent" and bypass the
+          # never-overwrite check below.
+          exists() {
+            local err="$RUNNER_TEMP/head-object.err"
+            if aws s3api head-object --bucket "$ARTIFACTS_BUCKET" --key "$1" > /dev/null 2> "$err"; then
+              return 0
+            fi
+            if grep -qE '\(404\)|Not Found' "$err"; then
+              return 1
+            fi
+            echo "::error::head-object s3://$ARTIFACTS_BUCKET/$1 failed: $(cat "$err")"
+            exit 1
+          }
+          if exists "$KEY.sha256"; then
+            EXISTING=$(aws s3 cp "s3://$ARTIFACTS_BUCKET/$KEY.sha256" - | awk '{ print $1 }')
             if [ "$EXISTING" = "$SHA" ]; then
               echo "s3://$ARTIFACTS_BUCKET/$KEY already holds sha256 $SHA; nothing to do"
               exit 0
             fi
-            echo "::error::s3://$ARTIFACTS_BUCKET/$KEY exists with sha256 $EXISTING, this build is $SHA. Versions are never overwritten: bump dist.version in otelcol/builder-config.yaml."
+            echo "::error::s3://$ARTIFACTS_BUCKET/$KEY exists with sha256 '$EXISTING', this build is $SHA. Versions are never overwritten: bump dist.version in otelcol/builder-config.yaml."
+            exit 1
+          fi
+          if exists "$KEY"; then
+            echo "::error::s3://$ARTIFACTS_BUCKET/$KEY exists without its .sha256 (an interrupted upload?). Not overwriting: check it and delete it by hand, or bump dist.version."
             exit 1
           fi
           # Binary first, checksum last: a fetch never sees a .sha256
