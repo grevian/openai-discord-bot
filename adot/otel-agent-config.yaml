@@ -37,7 +37,7 @@ receivers:
 processors:
   # First in every pipeline. Sized for a small instance: the collector idles
   # at ~40 MB RSS; it refuses data (the bot's SDK retries) from 75 MiB of Go
-  # heap and forces a GC at 100 MiB. GOMEMLIMIT=80MiB and MemoryMax=200M are
+  # heap and forces a GC at 100 MiB. GOMEMLIMIT=80MiB and MemoryMax=128M are
   # set in the systemd unit (terraform/user-data.sh.tftpl).
   memory_limiter:
     check_interval: 1s

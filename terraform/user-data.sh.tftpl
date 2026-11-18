@@ -240,8 +240,8 @@ ExecStart=/usr/local/bin/otelcol-danbot --config=/etc/otel/config.yaml
 # data from 75 MiB (soft) / 100 MiB (hard), and MemoryMax is the backstop:
 # the kernel kills the collector, not the bot, and systemd restarts it.
 Environment=GOMEMLIMIT=80MiB
-MemoryHigh=150M
-MemoryMax=200M
+MemoryHigh=96M
+MemoryMax=128M
 NoNewPrivileges=yes
 ProtectSystem=full
 ProtectHome=yes
@@ -281,6 +281,11 @@ Environment=OTEL_SERVICE_NAME=danbot
 Environment=OTEL_EXPORTER_OTLP_INSECURE=true
 # Go soft memory limit (a Dockerfile ENV doesn't reach the native process).
 Environment=GOMEMLIMIT=64MiB
+# Cgroup limits for a 512 MiB t4g.nano: with the collector's 128M and ~90 MiB
+# for the OS they leave headroom, so the kernel kills the bot, not the host.
+# Idle is ~42 MiB; the ExecStartPre aws cli adds ~57 MiB while it runs.
+MemoryHigh=144M
+MemoryMax=176M
 TimeoutStartSec=300
 TimeoutStopSec=45
 Restart=always

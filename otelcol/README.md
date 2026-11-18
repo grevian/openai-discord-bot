@@ -56,7 +56,7 @@ variable. So a failed fetch is retried on every restart. The collector runs as `
 under its own `otelcol` user, with the `systemd-journal` group for the journald
 receiver. `otelcol-env.sh` (run as root before each start) puts the Honeycomb
 key from SSM into `/run/otelcol/env`. Memory: `GOMEMLIMIT=80MiB`,
-`memory_limiter` at 75/100 MiB, `MemoryMax=200M`.
+`memory_limiter` at 75/100 MiB, `MemoryHigh=96M`, `MemoryMax=128M`.
 
 Check it over SSM: `systemctl status otel-collector`,
 `journalctl -u otel-collector -n 50`, `ps -o rss= -C otelcol-danbot`.
