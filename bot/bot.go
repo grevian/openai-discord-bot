@@ -141,7 +141,7 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 
 	bot := &AIBot{
 		discord:             sessionDiscord{discordSession},
-		images:              &aiClient.Images,
+		images:              leanImages{&aiClient.Images},
 		responses:           &aiClient.Responses,
 		botCtx:              botCtx,
 		shutdown:            shutdown,
