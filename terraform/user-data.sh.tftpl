@@ -9,9 +9,62 @@ CONVERSATIONS_TBL="${conversations_tbl}"
 FLAGS_TBL="${flags_tbl}"
 OTEL_VERSION="${otel_version}"
 
+ARTIFACTS_BUCKET="${artifacts_bucket}"
+
 dnf update -y
 dnf install -y docker tar gzip
 systemctl enable --now docker
+
+# fetch-artifact NAME VERSION FILE [EXPECTED_SHA256]
+# Downloads artifacts/NAME/VERSION/FILE from the private artifacts bucket
+# (terraform/artifacts.tf) into a fresh directory under /var/tmp, checks it
+# against FILE.sha256 stored next to it and, when given, against
+# EXPECTED_SHA256 too (a hash pinned in the repo, so a replaced object in the
+# bucket can't pass). Prints the verified file's path on stdout; on any
+# failure prints why on stderr, deletes the download and exits non-zero.
+# Installed as a script, not a shell function, so start scripts can call it
+# later (e.g. on every restart), not only this boot script.
+cat > /usr/local/bin/fetch-artifact <<EOF
+#!/bin/bash
+set -euo pipefail
+REGION="$REGION"
+ARTIFACTS_BUCKET="$ARTIFACTS_BUCKET"
+EOF
+cat >> /usr/local/bin/fetch-artifact <<'FETCH_EOF'
+if [ $# -lt 3 ] || [ $# -gt 4 ]; then
+  echo "usage: fetch-artifact NAME VERSION FILE [EXPECTED_SHA256]" >&2
+  exit 2
+fi
+NAME="$1" VERSION="$2" FILE="$3" PINNED="$${4:-}"
+for part in "$NAME" "$VERSION" "$FILE"; do
+  # One path segment each: no slashes, no "..", no empty parts.
+  if ! [[ "$part" =~ ^[A-Za-z0-9._+-]+$ ]] || [[ "$part" == *..* ]]; then
+    echo "fetch-artifact: invalid name, version or file: '$part'" >&2
+    exit 2
+  fi
+done
+if [ -n "$PINNED" ] && ! [[ "$PINNED" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "fetch-artifact: EXPECTED_SHA256 is not a sha256 hex digest" >&2
+  exit 2
+fi
+KEY="artifacts/$NAME/$VERSION/$FILE"
+DIR=$(mktemp -d /var/tmp/artifact.XXXXXX)
+fail() { echo "fetch-artifact: $KEY: $*" >&2; rm -rf "$DIR"; exit 1; }
+aws s3 cp --only-show-errors --region "$REGION" "s3://$ARTIFACTS_BUCKET/$KEY" "$DIR/$FILE" >&2 \
+  || fail "download failed"
+aws s3 cp --only-show-errors --region "$REGION" "s3://$ARTIFACTS_BUCKET/$KEY.sha256" "$DIR/$FILE.sha256" >&2 \
+  || fail "checksum download failed"
+WANT=$(awk 'NR == 1 { print $1 }' "$DIR/$FILE.sha256")
+[[ "$WANT" =~ ^[0-9a-f]{64}$ ]] || fail "$FILE.sha256 holds no sha256 digest"
+GOT=$(sha256sum "$DIR/$FILE" | awk '{ print $1 }')
+[ "$GOT" = "$WANT" ] || fail "sha256 $GOT does not match $FILE.sha256 ($WANT)"
+if [ -n "$PINNED" ] && [ "$GOT" != "$PINNED" ]; then
+  fail "sha256 $GOT does not match the pinned $PINNED"
+fi
+rm -f "$DIR/$FILE.sha256"
+echo "$DIR/$FILE"
+FETCH_EOF
+chmod 0755 /usr/local/bin/fetch-artifact
 
 mkdir -p /etc/otel
 cat > /etc/otel/config.yaml <<'OTEL_CONFIG_EOF'

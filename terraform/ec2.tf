@@ -49,6 +49,7 @@ resource "aws_launch_template" "bot" {
     images_bucket     = aws_s3_bucket.images.id
     conversations_tbl = aws_dynamodb_table.conversations.id
     flags_tbl         = aws_dynamodb_table.flags.id
+    artifacts_bucket  = aws_s3_bucket.artifacts.id
     otel_config       = file("${path.module}/../adot/otel-agent-config.yaml")
     otel_version      = var.otel_collector_version
   }))

@@ -1,0 +1,149 @@
+name: Collector
+
+# Builds the minimal OpenTelemetry collector (otelcol/builder-config.yaml) for
+# the instance (linux/arm64) and, on master, uploads it to the private
+# artifacts bucket (terraform/artifacts.tf) as
+#   artifacts/otelcol-danbot/<dist version>/otelcol-danbot-linux-arm64(.sha256)
+# The instance fetches it at boot with fetch-artifact (user-data).
+#
+# A version is never overwritten: if the key already exists, the upload step
+# checks that the existing object has the same sha256 and stops otherwise.
+# Change dist.version in the manifest for any rebuild with different bytes.
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "otelcol/**"
+      - "adot/otel-agent-config.yaml"
+      - ".github/workflows/otelcol.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "otelcol/**"
+      - "adot/otel-agent-config.yaml"
+      - ".github/workflows/otelcol.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  AWS_REGION: ca-central-1
+  ARTIFACTS_BUCKET: openai-discord-bot-prod-artifacts
+  ARTIFACT_NAME: otelcol-danbot
+  ARTIFACT_FILE: otelcol-danbot-linux-arm64
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      sha256: ${{ steps.meta.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # build.sh pins the exact toolchain through GOTOOLCHAIN; this only
+      # provides a go command to start from.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build
+        run: otelcol/build.sh arm64
+
+      - name: Smoke test
+        run: |
+          BIN="otelcol/_build/$ARTIFACT_FILE"
+          "$BIN" --version
+          "$BIN" components
+          # The production config must load with exactly these components
+          HONEYCOMB_API_KEY=dummy "$BIN" validate --config=adot/otel-agent-config.yaml
+
+      - name: Metadata
+        id: meta
+        run: |
+          VERSION=$(yq -r '.dist.version' otelcol/builder-config.yaml)
+          if ! [[ "$VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+            echo "::error::dist.version '$VERSION' is not a valid artifact version"
+            exit 1
+          fi
+          SHA=$(awk '{ print $1 }' "otelcol/_build/$ARTIFACT_FILE.sha256")
+          SIZE=$(stat -c %s "otelcol/_build/$ARTIFACT_FILE")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "### $ARTIFACT_NAME $VERSION"
+            echo
+            echo "- file: \`$ARTIFACT_FILE\` ($((SIZE / 1024 / 1024)) MiB, $SIZE bytes)"
+            echo "- sha256: \`$SHA\`"
+            echo "- key: \`artifacts/$ARTIFACT_NAME/$VERSION/$ARTIFACT_FILE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_FILE }}
+          path: |
+            otelcol/_build/${{ env.ARTIFACT_FILE }}
+            otelcol/_build/${{ env.ARTIFACT_FILE }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  upload:
+    name: upload
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    environment: production
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    concurrency: otelcol-upload
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_FILE }}
+          path: dist
+
+      - name: Verify checksum
+        working-directory: dist
+        run: sha256sum -c "$ARTIFACT_FILE.sha256"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-duration-seconds: 900
+
+      - name: Upload to S3
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA: ${{ needs.build.outputs.sha256 }}
+        run: |
+          KEY="artifacts/$ARTIFACT_NAME/$VERSION/$ARTIFACT_FILE"
+          if ! aws s3api head-bucket --bucket "$ARTIFACTS_BUCKET" 2>/dev/null; then
+            echo "::error::bucket $ARTIFACTS_BUCKET does not exist yet: run the Terraform workflow, then re-run this workflow"
+            exit 1
+          fi
+          if EXISTING=$(aws s3 cp "s3://$ARTIFACTS_BUCKET/$KEY.sha256" - 2>/dev/null | awk '{ print $1 }') && [ -n "$EXISTING" ]; then
+            if [ "$EXISTING" = "$SHA" ]; then
+              echo "s3://$ARTIFACTS_BUCKET/$KEY already holds sha256 $SHA; nothing to do"
+              exit 0
+            fi
+            echo "::error::s3://$ARTIFACTS_BUCKET/$KEY exists with sha256 $EXISTING, this build is $SHA. Versions are never overwritten: bump dist.version in otelcol/builder-config.yaml."
+            exit 1
+          fi
+          # Binary first, checksum last: a fetch never sees a .sha256
+          # for a file that is not there yet.
+          aws s3 cp --only-show-errors "dist/$ARTIFACT_FILE" "s3://$ARTIFACTS_BUCKET/$KEY"
+          aws s3 cp --only-show-errors "dist/$ARTIFACT_FILE.sha256" "s3://$ARTIFACTS_BUCKET/$KEY.sha256"
+          echo "Uploaded s3://$ARTIFACTS_BUCKET/$KEY (sha256 $SHA)"
