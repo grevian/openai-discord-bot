@@ -277,7 +277,11 @@ Wants=otel-collector.service network-online.target
 Type=simple
 User=danbot
 Group=danbot
-WorkingDirectory=/opt/danbot/current
+# The "-" matters: systemd changes into the working directory before it runs
+# ExecStartPre= too, and /opt/danbot/current is only created by that script on
+# the first start. Without it the first start fails at step CHDIR. ExecStart
+# changes directory again, by then into the release.
+WorkingDirectory=-/opt/danbot/current
 ExecStartPre=+/usr/local/bin/danbot-prepare.sh
 ExecStart=/opt/danbot/current/danbot
 EnvironmentFile=-/run/danbot/bot.env
