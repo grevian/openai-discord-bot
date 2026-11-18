@@ -1,7 +1,7 @@
 name: Instance Refresh
 
 # Replaces the bot's EC2 instance so it boots from the latest launch template
-# (user-data: start-bot.sh, secrets, docker run flags). The ASG uses version
+# (user-data: danbot-prepare.sh, the bot.service unit and its flags). The ASG uses version
 # "$Latest", so Terraform never sees a change to trigger its own refresh.
 on:
   workflow_dispatch:
@@ -65,7 +65,7 @@ jobs:
       # One instance (min = max = 1), so there is no healthy capacity to keep:
       # MinHealthyPercentage=0 terminates the old instance, then launches the
       # new one. The bot is offline until the new instance boots and
-      # start-bot.sh runs (a few minutes).
+      # danbot-prepare.sh has fetched the release (a few minutes).
       # Two bots on one Discord token would fight over the session, so the
       # overlapping variant (min 100, max 200) is deliberately not used.
       - name: Start instance refresh

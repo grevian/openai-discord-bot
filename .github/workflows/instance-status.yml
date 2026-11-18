@@ -48,7 +48,11 @@ jobs:
           echo "== collector binary"; ls -l /usr/local/bin/otelcol-danbot /usr/local/bin/otelcol-contrib 2>&1 || true
           sha256sum /usr/local/bin/otelcol-danbot 2>&1 || true
           echo "== collector log"; journalctl -u otel-collector.service -n 40 --no-pager -o short-iso | cut -c1-300
-          echo "== bot container"; docker ps --format "{{.Names}} {{.Status}} {{.Image}}"
+          echo "== bot unit"; systemctl show bot.service -p ExecMainStartTimestamp -p NRestarts -p MemoryCurrent -p User -p MainPID || true
+          echo "== bot release"; readlink /opt/danbot/current; ls -l /opt/danbot/releases 2>&1 || true
+          echo "== bot log (prepare, warnings and errors only)"; journalctl -u bot.service -n 200 --no-pager -o cat | grep -E "danbot-prepare|ERROR|WARN" | tail -n 15 | cut -c1-300 || true
+          echo "== bot sandbox"; systemd-analyze security bot.service --no-pager 2>&1 | tail -n 2 || true
+          echo "== bot container (legacy)"; if command -v docker >/dev/null; then docker ps --format "{{.Names}} {{.Status}} {{.Image}}"; else echo "docker not installed"; fi
           ' '{commands: ($s | split("\n"))}')
           CMD_ID=$(aws ssm send-command --document-name AWS-RunShellScript \
             --instance-ids "$INSTANCE_ID" --comment "Instance status (read-only)" \

@@ -3,7 +3,6 @@ set -euxo pipefail
 
 REGION="${region}"
 PARAM_PREFIX="/${service}/${environment}"
-IMAGE_REPO="${image_repo}"
 IMAGES_BUCKET="${images_bucket}"
 CONVERSATIONS_TBL="${conversations_tbl}"
 FLAGS_TBL="${flags_tbl}"
@@ -13,8 +12,7 @@ OTELCOL_SHA256="${otelcol_sha256}"
 ARTIFACTS_BUCKET="${artifacts_bucket}"
 
 dnf update -y
-dnf install -y docker tar gzip
-systemctl enable --now docker
+dnf install -y tar gzip
 
 # fetch-artifact NAME VERSION FILE [EXPECTED_SHA256]
 # Downloads artifacts/NAME/VERSION/FILE from the private artifacts bucket
@@ -105,54 +103,105 @@ echo "installed otelcol-danbot $VERSION"
 INSTALL_EOF
 chmod 0755 /usr/local/bin/otelcol-install.sh
 
-cat > /usr/local/bin/start-bot.sh <<EOF
+# The bot runs as the native static binary from the artifacts bucket (built by
+# deploy.yml), not in a container. Layout:
+#   /opt/danbot/releases/<git sha>/{danbot,prompts/}   one directory per release
+#   /opt/danbot/current -> releases/<git sha>          what bot.service runs
+# The bot reads prompts/danbo.json relative to its working directory, so the
+# unit's WorkingDirectory is /opt/danbot/current.
+id danbot >/dev/null 2>&1 || useradd --system --home-dir /opt/danbot --no-create-home --shell /sbin/nologin danbot
+install -d -m 0755 -o root -g root /opt/danbot /opt/danbot/releases
+
+# danbot-prepare.sh runs as root before every start of bot.service
+# (ExecStartPre=+), so `systemctl restart bot` is the deploy: it installs the
+# release named by the image_tag SSM parameter (the git sha deploy.yml wrote)
+# and refreshes the secrets file. The releases are root-owned and read-only to
+# the bot's user. Secrets go into /run/danbot/bot.env (tmpfs, root 0600), which
+# systemd reads for the unit's EnvironmentFile; they are never in the unit,
+# the command line or this script. No `set -x` here: it would log them.
+cat > /usr/local/bin/danbot-prepare.sh <<EOF
 #!/bin/bash
 set -euo pipefail
 
 REGION="$REGION"
 PARAM_PREFIX="$PARAM_PREFIX"
-IMAGE_REPO="$IMAGE_REPO"
-IMAGES_BUCKET="$IMAGES_BUCKET"
-CONVERSATIONS_TBL="$CONVERSATIONS_TBL"
-FLAGS_TBL="$FLAGS_TBL"
-
-IMAGE_TAG=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/image_tag" --query 'Parameter.Value' --output text --region "\$REGION")
-DISCORD_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/discord_token" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
-OPENAI_TOKEN=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/openai_token" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
-# Optional: link summaries stay off when the key can't be read or is the placeholder.
-KAGI_API_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/kagi_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION") || KAGI_API_KEY=""
-if [ "\$KAGI_API_KEY" = "populated-out-of-band" ]; then KAGI_API_KEY=""; fi
-# Optional: the owner-only flag command stays off when the ID can't be read or is the placeholder.
-OWNER_USER_ID=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/owner_user_id" --query 'Parameter.Value' --output text --region "\$REGION") || OWNER_USER_ID=""
-if [ "\$OWNER_USER_ID" = "populated-out-of-band" ]; then OWNER_USER_ID=""; fi
-
-# Secrets go to docker through a root-only env file, not -e NAME=value, so
-# they don't show in the docker client's command line (ps, /proc/*/cmdline).
-# docker inspect still shows them, as it does for any container env. /run is
-# tmpfs, so the file never reaches disk; it is rewritten on every start.
-ENV_FILE=/run/danbot/bot.env
-install -d -m 0700 /run/danbot
-(umask 077; printf 'BOT_DISCORD_TOKEN=%s\nBOT_OPENAI_AUTH_TOKEN=%s\nBOT_KAGI_API_KEY=%s\n' \\
-  "\$DISCORD_TOKEN" "\$OPENAI_TOKEN" "\$KAGI_API_KEY" > "\$ENV_FILE.tmp")
-mv -f "\$ENV_FILE.tmp" "\$ENV_FILE"
-
-IMAGE="\$IMAGE_REPO:\$IMAGE_TAG"
-docker pull "\$IMAGE"
-docker rm -f bot 2>/dev/null || true
-exec docker run --rm --name bot --network host --stop-timeout 45 \\
-  -e BOT_JSON_LOGS=true \\
-  -e BOT_TRACING=true \\
-  -e BOT_OTLP_LOGS=true \\
-  -e BOT_OPENAIDISCORDBOTIMAGES_NAME="\$IMAGES_BUCKET" \\
-  -e AI_DISCORD_BOT_CONVERSATIONS_NAME="\$CONVERSATIONS_TBL" \\
-  -e BOT_FLAGS_TABLE="\$FLAGS_TBL" \\
-  -e BOT_OWNER_USER_ID="\$OWNER_USER_ID" \\
-  -e OTEL_SERVICE_NAME=danbot \\
-  -e OTEL_EXPORTER_OTLP_INSECURE=true \\
-  --env-file "\$ENV_FILE" \\
-  "\$IMAGE"
 EOF
-chmod +x /usr/local/bin/start-bot.sh
+cat >> /usr/local/bin/danbot-prepare.sh <<'PREPARE_EOF'
+ARTIFACT_FILE=danbot-linux-arm64.tar.gz
+KEEP_RELEASES=3
+
+# get NAME [aws args]: the SSM parameter's value
+get() {
+  local name="$1"
+  shift
+  aws ssm get-parameter --name "$PARAM_PREFIX/$name" "$@" --query 'Parameter.Value' --output text --region "$REGION"
+}
+
+# --- 1. install the release -------------------------------------------------
+SHA=$(get image_tag)
+if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "danbot-prepare: image_tag '$SHA' is not a git sha; deploy.yml sets it on every deploy" >&2
+  exit 1
+fi
+REL="/opt/danbot/releases/$SHA"
+if [ ! -x "$REL/danbot" ]; then
+  FILE=$(/usr/local/bin/fetch-artifact danbot "$SHA" "$ARTIFACT_FILE")
+  STAGE=$(mktemp -d /opt/danbot/releases/.stage.XXXXXX)
+  trap 'rm -rf "$STAGE" "$(dirname "$FILE")"' EXIT
+  tar -xzf "$FILE" -C "$STAGE" --no-same-owner --no-same-permissions
+  if [ ! -x "$STAGE/danbot" ] || [ ! -f "$STAGE/prompts/danbo.json" ]; then
+    echo "danbot-prepare: $ARTIFACT_FILE for $SHA lacks danbot or prompts/danbo.json" >&2
+    exit 1
+  fi
+  chown -R root:root "$STAGE"
+  chmod -R go-w "$STAGE"
+  chmod 0755 "$STAGE"
+  rm -rf "$REL"
+  mv -T "$STAGE" "$REL"
+fi
+ln -sfn "$REL" /opt/danbot/current.new
+mv -T /opt/danbot/current.new /opt/danbot/current
+
+# Keep the newest releases (rollback targets) and delete the rest. Never the
+# current one, whatever its age.
+ls -1dt /opt/danbot/releases/*/ 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | while read -r old; do
+  [ "$(basename "$old")" = "$SHA" ] || rm -rf "$old"
+done
+
+# --- 2. secrets and optional settings -> the unit's EnvironmentFile ---------
+DISCORD_TOKEN=$(get discord_token --with-decryption)
+OPENAI_TOKEN=$(get openai_token --with-decryption)
+# Optional: link summaries stay off when the key can't be read or is the placeholder.
+KAGI_API_KEY=$(get kagi_api_key --with-decryption) || KAGI_API_KEY=""
+if [ "$KAGI_API_KEY" = "populated-out-of-band" ]; then KAGI_API_KEY=""; fi
+# Optional: the owner-only flag command stays off when the ID can't be read or is the placeholder.
+OWNER_USER_ID=$(get owner_user_id) || OWNER_USER_ID=""
+if [ "$OWNER_USER_ID" = "populated-out-of-band" ]; then OWNER_USER_ID=""; fi
+
+# An EnvironmentFile line ends at a newline and gives quotes, backslashes and
+# a leading # a meaning, so only plain token characters are written. A required
+# secret with other characters stops the start; an optional value is dropped
+# with a warning (that feature stays off) instead of keeping the bot down.
+for v in DISCORD_TOKEN OPENAI_TOKEN; do
+  if ! [[ "$${!v}" =~ ^[A-Za-z0-9._~+/=-]*$ ]]; then
+    echo "danbot-prepare: $v holds characters outside [A-Za-z0-9._~+/=-]; not writing it" >&2
+    exit 1
+  fi
+done
+for v in KAGI_API_KEY OWNER_USER_ID; do
+  if ! [[ "$${!v}" =~ ^[A-Za-z0-9._~+/=-]*$ ]]; then
+    echo "danbot-prepare: WARNING: optional $v holds characters outside [A-Za-z0-9._~+/=-]; leaving it unset" >&2
+    printf -v "$v" '%s' ""
+  fi
+done
+
+install -d -m 0700 -o root -g root /run/danbot
+(umask 077; printf 'BOT_DISCORD_TOKEN=%s\nBOT_OPENAI_AUTH_TOKEN=%s\nBOT_KAGI_API_KEY=%s\nBOT_OWNER_USER_ID=%s\n' \
+  "$DISCORD_TOKEN" "$OPENAI_TOKEN" "$KAGI_API_KEY" "$OWNER_USER_ID" > /run/danbot/bot.env.tmp)
+mv -f /run/danbot/bot.env.tmp /run/danbot/bot.env
+echo "danbot-prepare: release $SHA is current"
+PREPARE_EOF
+chmod 0755 /usr/local/bin/danbot-prepare.sh
 
 # Runs as root before each collector start (ExecStartPre=+): writes the
 # Honeycomb key to a root-only env file on tmpfs, which systemd passes to the
@@ -208,20 +257,68 @@ RestartSec=10
 WantedBy=multi-user.target
 UNIT_EOF
 
+# Sandboxing notes (systemd.exec(5)): ProtectSystem=strict makes the whole file
+# system read-only to the bot, which writes nothing local (state is in
+# DynamoDB and S3; the Go runtime needs only /tmp, which PrivateTmp gives it).
+# The ExecStartPre=+ script runs outside this sandbox, as root. The
+# AF_INET/AF_INET6 sockets cover Discord, OpenAI, AWS and the collector on
+# 127.0.0.1:4317/4318 (IMDS is plain IPv4 too); AF_NETLINK is for Go's net
+# package. A blocked system call fails with EPERM instead of killing the bot. The unit has no secrets: those
+# are in EnvironmentFile (written by danbot-prepare.sh).
+# TimeoutStopSec matches the shutdown budget in shutdown.go: SIGTERM, then
+# SIGKILL after 45s.
 cat > /etc/systemd/system/bot.service <<'UNIT_EOF'
 [Unit]
-Description=OpenAI Discord Bot
-After=docker.service otel-collector.service network-online.target
-Requires=docker.service
+Description=OpenAI Discord Bot (danbot)
+After=otel-collector.service network-online.target
 Wants=otel-collector.service network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/start-bot.sh
-ExecStop=/usr/bin/docker stop -t 45 bot
-TimeoutStopSec=60
+User=danbot
+Group=danbot
+WorkingDirectory=/opt/danbot/current
+ExecStartPre=+/usr/local/bin/danbot-prepare.sh
+ExecStart=/opt/danbot/current/danbot
+EnvironmentFile=-/run/danbot/bot.env
+Environment=BOT_JSON_LOGS=true
+Environment=BOT_TRACING=true
+Environment=BOT_OTLP_LOGS=true
+Environment=BOT_OPENAIDISCORDBOTIMAGES_NAME=${images_bucket}
+Environment=AI_DISCORD_BOT_CONVERSATIONS_NAME=${conversations_tbl}
+Environment=BOT_FLAGS_TABLE=${flags_tbl}
+Environment=OTEL_SERVICE_NAME=danbot
+Environment=OTEL_EXPORTER_OTLP_INSECURE=true
+# Soft memory limit for the Go runtime (the instance has 1 GiB shared with
+# the collector). A Dockerfile ENV does not apply to the native process.
+Environment=GOMEMLIMIT=64MiB
+TimeoutStartSec=300
+TimeoutStopSec=45
 Restart=always
 RestartSec=10
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
