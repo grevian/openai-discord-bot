@@ -15,6 +15,9 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // Bounds for the thread-context condense pass. The input caps limit the cost
@@ -159,7 +162,19 @@ func parseDirectives(reply string) []string {
 // there is nothing to condense or nothing applies. The call is bounded by
 // timeouts.OpenAIContext; the caller treats any error as "no context".
 func (b *AIBot) condenseEditContext(ctx context.Context, thread []storage.ConversationMessage, request string) ([]string, error) {
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "condenseEditContext")
+	defer span.End()
 	source := condenseSource(thread)
+	sourceChars := 0
+	for _, s := range source {
+		sourceChars += utf8.RuneCountInString(s)
+	}
+	span.SetAttributes(
+		attribute.Int("condense.history_messages", len(thread)),
+		attribute.Int("condense.source_messages", len(source)),
+		attribute.Int("condense.source_chars", sourceChars),
+		attribute.Int("condense.directives", 0),
+	)
 	if len(source) == 0 {
 		return nil, nil
 	}
@@ -175,14 +190,18 @@ func (b *AIBot) condenseEditContext(ctx context.Context, thread []storage.Conver
 	}
 	callCtx, cancel := withTimeout(ctx, b.timeouts.OpenAIContext)
 	defer cancel()
-	resp, err := b.responses.New(callCtx, req)
+	resp, err := b.responsesNew(callCtx, opCondense, req)
 	if err != nil {
 		if isFatalOpenAIError(err) {
 			b.handleFatalOpenAIError(ctx, err)
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("condense call failed: %w", err)
 	}
-	return parseDirectives(resp.OutputText()), nil
+	directives := parseDirectives(resp.OutputText())
+	span.SetAttributes(attribute.Int("condense.directives", len(directives)))
+	return directives, nil
 }
 
 // editDirectives returns the condensed context for an edit, or nil. A failed
@@ -230,10 +249,19 @@ const editContextHeading = "Earlier directives from this conversation that still
 // within one Discord call's deadline, and stops early at the chain's start,
 // a message it has already seen, or a fetch that fails.
 func (b *AIBot) replyChain(ctx context.Context, reply *discordgo.Message) []storage.ConversationMessage {
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "replyChain")
+	defer span.End()
 	ctx, cancel := withTimeout(ctx, b.timeouts.Discord)
 	defer cancel()
 	botID := b.discord.BotUser().ID
 	seen := map[string]bool{}
+	hops, fetched := 0, 0
+	defer func() {
+		span.SetAttributes(
+			attribute.Int("reply_chain.hops", hops),
+			attribute.Int("reply_chain.messages_fetched", fetched),
+		)
+	}()
 	var newestFirst []storage.ConversationMessage
 	msg := reply
 	for range maxReplyChainMessages {
@@ -241,6 +269,7 @@ func (b *AIBot) replyChain(ctx context.Context, reply *discordgo.Message) []stor
 			break
 		}
 		seen[msg.ID] = true
+		hops++
 		if msg.Author != nil && msg.Author.ID != botID {
 			_, text := classifyMessage(msg.Content, botID, true)
 			if text = strings.TrimSpace(text); text != "" {
@@ -256,16 +285,19 @@ func (b *AIBot) replyChain(ctx context.Context, reply *discordgo.Message) []stor
 			if channel == "" {
 				channel = msg.ChannelID
 			}
-			fetched, err := b.discord.ChannelMessage(channel, msg.MessageReference.MessageID, discordgo.WithContext(ctx))
+			fetched++
+			fetchedMsg, err := b.discord.ChannelMessage(channel, msg.MessageReference.MessageID, discordgo.WithContext(ctx))
 			if err != nil {
+				span.RecordError(err)
 				slog.Default().WithGroup("handleImageEditMessage").WarnContext(ctx,
 					"could not fetch an earlier message of the reply chain", slog.Any("error", err))
 				break
 			}
-			next = fetched
+			next = fetchedMsg
 		}
 		msg = next
 	}
 	slices.Reverse(newestFirst)
+	span.SetAttributes(attribute.Int("reply_chain.user_requests", len(newestFirst)))
 	return newestFirst
 }

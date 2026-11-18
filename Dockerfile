@@ -2,6 +2,8 @@ FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS build
 
 ARG TARGETOS
 ARG TARGETARCH
+# Git sha of the build, reported as deploy.version in telemetry.
+ARG VERSION=dev
 
 WORKDIR /app
 
@@ -12,7 +14,7 @@ RUN go mod download
 
 COPY . /app
 
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /service-bin
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-X openai-discord-bot/telemetry.Version=${VERSION}" -o /service-bin
 
 FROM alpine
 

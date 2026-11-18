@@ -8,18 +8,35 @@ import (
 	"sync"
 	"time"
 
+	"openai-discord-bot/telemetry"
+
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/detectors/aws/ec2/v2"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
 	otellog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 var ec2ResourceDetector = ec2.NewResourceDetector()
+
+// buildResource is the detected EC2 resource plus the build version, so every
+// span and log can be filtered by deploy.
+func buildResource(detected *resource.Resource) *resource.Resource {
+	merged, err := resource.Merge(detected, resource.NewSchemaless(
+		attribute.String("service.version", telemetry.Version),
+		attribute.String("deploy.version", telemetry.Version),
+	))
+	if err != nil {
+		return detected
+	}
+	return merged
+}
 
 func configureTracing(serviceCtx context.Context) error {
 	// Configure a traceExporter to write to a sidecar collector
@@ -39,7 +56,7 @@ func configureTracing(serviceCtx context.Context) error {
 	traceProvider := trace.NewTracerProvider(
 		trace.WithSampler(trace.AlwaysSample()),
 		trace.WithBatcher(traceExporter),
-		trace.WithResource(ec2Resource),
+		trace.WithResource(buildResource(ec2Resource)),
 	)
 	otel.SetTracerProvider(traceProvider)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
@@ -104,7 +121,7 @@ func configureLogging(serviceCtx context.Context) error {
 
 		provider := otellog.NewLoggerProvider(
 			otellog.WithProcessor(otellog.NewBatchProcessor(exp)),
-			otellog.WithResource(ec2Resource),
+			otellog.WithResource(buildResource(ec2Resource)),
 		)
 		otel.SetLoggerProvider(provider)
 

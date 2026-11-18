@@ -205,7 +205,7 @@ func (b *AIBot) handleSummarizeMessage(ctx context.Context, responseChannel, raw
 		Input:        responses.ResponseNewParamsInputUnion{OfInputItemList: inputItems},
 	}
 	openaiCtx, cancel := withTimeout(ctx, b.timeouts.OpenAIText)
-	response, err := b.responses.New(openaiCtx, request)
+	response, err := b.responsesNew(openaiCtx, opSummarize, request)
 	cancel()
 	if err != nil {
 		if isFatalOpenAIError(err) {
