@@ -49,7 +49,8 @@ resource "aws_launch_template" "bot" {
     flags_tbl         = aws_dynamodb_table.flags.id
     artifacts_bucket  = aws_s3_bucket.artifacts.id
     otel_config       = file("${path.module}/../adot/otel-agent-config.yaml")
-    otel_version      = var.otel_collector_version
+    otelcol_version   = var.otelcol_version
+    otelcol_sha256    = var.otelcol_sha256
   }))
 
   tag_specifications {

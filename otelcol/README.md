@@ -45,3 +45,26 @@ upgrade), bump `dist.version` in `builder-config.yaml`; for an upgrade, also
 bump every component version and `OCB_VERSION` in `build.sh`. After the upload,
 set the version and the sha256 from the workflow summary in terraform and run
 the Terraform workflow, which replaces the instance.
+
+## On the instance
+
+`terraform/user-data.sh.tftpl` sets up `otel-collector.service`. Before every
+start, `otelcol-install.sh` (as root) makes sure `/usr/local/bin/otelcol-danbot`
+is the pinned version: if not, it fetches it with `fetch-artifact`, which
+checks the `.sha256` next to the object and the `otelcol_sha256` terraform
+variable. So a failed fetch is retried on every restart. The collector runs as `otel-collector.service`
+under its own `otelcol` user, with the `systemd-journal` group for the journald
+receiver. `otelcol-env.sh` (run as root before each start) puts the Honeycomb
+key from SSM into `/run/otelcol/env`. Memory: `GOMEMLIMIT=80MiB`,
+`memory_limiter` at 75/100 MiB, `MemoryMax=200M`.
+
+Check it over SSM: `systemctl status otel-collector`,
+`journalctl -u otel-collector -n 50`, `ps -o rss= -C otelcol-danbot`.
+
+## Rollback to otelcol-contrib
+
+Revert the PR that switched user-data to this collector (it restores the
+otelcol-contrib download, `start-otel.sh` and the `otel_collector_version`
+variable), then run the Terraform workflow; the launch template change
+triggers an instance refresh. The config stays compatible: otelcol-contrib
+0.164.0 accepts the same component names and `memory_limiter`.

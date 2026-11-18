@@ -6,7 +6,8 @@ PARAM_PREFIX="/${service}/${environment}"
 IMAGES_BUCKET="${images_bucket}"
 CONVERSATIONS_TBL="${conversations_tbl}"
 FLAGS_TBL="${flags_tbl}"
-OTEL_VERSION="${otel_version}"
+OTELCOL_VERSION="${otelcol_version}"
+OTELCOL_SHA256="${otelcol_sha256}"
 
 ARTIFACTS_BUCKET="${artifacts_bucket}"
 
@@ -69,12 +70,38 @@ cat > /etc/otel/config.yaml <<'OTEL_CONFIG_EOF'
 ${otel_config}
 OTEL_CONFIG_EOF
 
-ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')
-curl -fsSL -o /tmp/otelcol.tar.gz \
-  "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v$OTEL_VERSION/otelcol-contrib_$${OTEL_VERSION}_linux_$${ARCH}.tar.gz"
-tar -xzf /tmp/otelcol.tar.gz -C /usr/local/bin/ otelcol-contrib
-chmod +x /usr/local/bin/otelcol-contrib
-rm -f /tmp/otelcol.tar.gz
+# Collector: the minimal ocb build from otelcol/ (published by the Collector
+# workflow), pinned by version and sha256 in terraform/variables.tf. Only an
+# arm64 build is published: the AMI is arm64. It runs as its own system user;
+# the unit adds the systemd-journal group so its journald receiver (which
+# runs journalctl) can read the journal.
+getent passwd otelcol > /dev/null || useradd --system --user-group --no-create-home --shell /sbin/nologin otelcol
+# The binary is installed by otelcol-install.sh, which the unit runs before
+# every start (ExecStartPre=+), not by this script: a failed fetch (S3 or the
+# network not ready yet) is then retried with every restart, logged to the
+# collector's journal, and never stops the bot from being set up.
+cat > /usr/local/bin/otelcol-install.sh <<EOF
+#!/bin/bash
+set -euo pipefail
+VERSION="$OTELCOL_VERSION"
+SHA256="$OTELCOL_SHA256"
+EOF
+cat >> /usr/local/bin/otelcol-install.sh <<'INSTALL_EOF'
+BIN=/usr/local/bin/otelcol-danbot
+if [ -x "$BIN" ] && [ "$(sha256sum "$BIN" | awk '{ print $1 }')" = "$SHA256" ]; then
+  exit 0
+fi
+echo "installing otelcol-danbot $VERSION"
+if ! TMP=$(fetch-artifact otelcol-danbot "$VERSION" otelcol-danbot-linux-arm64 "$SHA256"); then
+  echo "ERROR: could not fetch otelcol-danbot $VERSION; no telemetry until a restart succeeds" >&2
+  exit 1
+fi
+install -m 0755 "$TMP" "$BIN.new"
+mv -f "$BIN.new" "$BIN"
+rm -rf "$(dirname "$TMP")"
+echo "installed otelcol-danbot $VERSION"
+INSTALL_EOF
+chmod 0755 /usr/local/bin/otelcol-install.sh
 
 # The bot runs as the native static binary from the artifacts bucket (built by
 # deploy.yml), not in a container. Layout:
@@ -168,18 +195,22 @@ echo "danbot-prepare: release $SHA is current"
 PREPARE_EOF
 chmod 0755 /usr/local/bin/danbot-prepare.sh
 
-cat > /usr/local/bin/start-otel.sh <<EOF
+# Runs as root before each collector start (ExecStartPre=+): writes the
+# Honeycomb key to a root-only env file on tmpfs, which systemd passes to the
+# collector (EnvironmentFile), so the collector itself needs no AWS access.
+cat > /usr/local/bin/otelcol-env.sh <<EOF
 #!/bin/bash
 set -euo pipefail
 
 REGION="$REGION"
 PARAM_PREFIX="$PARAM_PREFIX"
 
-export HONEYCOMB_API_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/honeycomb_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
-
-exec /usr/local/bin/otelcol-contrib --config=/etc/otel/config.yaml
+HONEYCOMB_API_KEY=\$(aws ssm get-parameter --name "\$PARAM_PREFIX/honeycomb_api_key" --with-decryption --query 'Parameter.Value' --output text --region "\$REGION")
+ENV_FILE=/run/otelcol/env
+(umask 077; printf 'HONEYCOMB_API_KEY=%s\\n' "\$HONEYCOMB_API_KEY" > "\$ENV_FILE.tmp")
+mv -f "\$ENV_FILE.tmp" "\$ENV_FILE"
 EOF
-chmod +x /usr/local/bin/start-otel.sh
+chmod +x /usr/local/bin/otelcol-env.sh
 
 cat > /etc/systemd/system/otel-collector.service <<'UNIT_EOF'
 [Unit]
@@ -189,7 +220,28 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/start-otel.sh
+User=otelcol
+Group=otelcol
+SupplementaryGroups=systemd-journal
+# /run/otelcol, recreated on every start; the env file in it is root-only
+RuntimeDirectory=otelcol
+RuntimeDirectoryMode=0700
+ExecStartPre=+/usr/local/bin/otelcol-install.sh
+ExecStartPre=+/usr/local/bin/otelcol-env.sh
+# "-": the file does not exist yet when ExecStartPre itself is spawned
+EnvironmentFile=-/run/otelcol/env
+ExecStart=/usr/local/bin/otelcol-danbot --config=/etc/otel/config.yaml
+# Steady state is ~40 MB RSS. Three layers above that: GOMEMLIMIT makes the
+# Go GC work harder from 80 MiB, memory_limiter (adot config) refuses new
+# data from 75 MiB (soft) / 100 MiB (hard), and MemoryMax is the backstop:
+# the kernel kills the collector, not the bot, and systemd restarts it.
+Environment=GOMEMLIMIT=80MiB
+MemoryHigh=150M
+MemoryMax=200M
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
 Restart=always
 RestartSec=10
 
@@ -265,5 +317,8 @@ WantedBy=multi-user.target
 UNIT_EOF
 
 systemctl daemon-reload
-systemctl enable --now otel-collector.service
-systemctl enable --now bot.service
+systemctl enable otel-collector.service bot.service
+# --no-block: a collector that can't start (SSM, S3) must not fail this
+# script (set -e) before the bot is started. The bot only Wants the collector.
+systemctl start --no-block otel-collector.service
+systemctl start --no-block bot.service
