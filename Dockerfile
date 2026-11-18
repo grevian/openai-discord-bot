@@ -21,6 +21,13 @@ FROM alpine
 #   BOT_OPENAI_AUTH_TOKEN - injected by start-bot.sh from SSM Parameter Store
 # Locally, set these in your shell or a .env file consumed by your runner.
 
+# Soft memory limit for the Go runtime: past it the GC runs harder instead of
+# growing the heap. The bot idles at about 10 MB of heap and three drawings in
+# flight peak around 40 MB, so this only bites under a burst, and keeps RSS
+# down on a small instance. It is soft: the bot never fails for crossing it.
+# Override with -e GOMEMLIMIT=... at docker run.
+ENV GOMEMLIMIT=64MiB
+
 WORKDIR /app
 COPY --from=build /service-bin .
 COPY prompts ./prompts

@@ -104,6 +104,7 @@ var (
 	_ imageStore       = (*storage.ImageStorage)(nil)
 	_ galleryPublisher = (*gallery.Gallery)(nil)
 	_ imageAPI         = (*openai.ImageService)(nil)
+	_ imageAPI         = leanImages{}
 	_ responsesAPI     = (*responses.ResponseService)(nil)
 	_ discordAPI       = sessionDiscord{}
 	_ linkExtractor    = (*kagiClient)(nil)
