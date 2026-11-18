@@ -11,6 +11,16 @@ OTELCOL_SHA256="${otelcol_sha256}"
 
 ARTIFACTS_BUCKET="${artifacts_bucket}"
 
+# 1 GiB swapfile before dnf (a t4g.nano OOM-killed `dnf update -y`). Best
+# effort: failing must not stop this script. Prio 10: behind the AMI's zram.
+if { dd if=/dev/zero of=/swapfile bs=1M count=1024 conv=fsync && chmod 600 /swapfile \
+     && mkswap /swapfile && swapon -p 10 /swapfile; }; then
+  echo '/swapfile none swap sw,pri=10 0 0' >> /etc/fstab
+else
+  echo "WARNING: swapfile setup failed; continuing without it" >&2
+  swapoff /swapfile || true; rm -f /swapfile
+fi
+
 dnf update -y
 dnf install -y tar gzip
 
@@ -242,6 +252,7 @@ ExecStart=/usr/local/bin/otelcol-danbot --config=/etc/otel/config.yaml
 Environment=GOMEMLIMIT=80MiB
 MemoryHigh=96M
 MemoryMax=128M
+MemorySwapMax=0
 NoNewPrivileges=yes
 ProtectSystem=full
 ProtectHome=yes
@@ -281,11 +292,11 @@ Environment=OTEL_SERVICE_NAME=danbot
 Environment=OTEL_EXPORTER_OTLP_INSECURE=true
 # Go soft memory limit (a Dockerfile ENV doesn't reach the native process).
 Environment=GOMEMLIMIT=64MiB
-# Cgroup limits for a 512 MiB t4g.nano: with the collector's 128M and ~90 MiB
-# for the OS they leave headroom, so the kernel kills the bot, not the host.
-# Idle is ~42 MiB; the ExecStartPre aws cli adds ~57 MiB while it runs.
+# Cgroup limits sized for a 512 MiB t4g.nano (with the collector's 128M and
+# ~90 MiB for the OS). No swap for the services (MemorySwapMax=0).
 MemoryHigh=144M
 MemoryMax=176M
+MemorySwapMax=0
 TimeoutStartSec=300
 TimeoutStopSec=45
 Restart=always
