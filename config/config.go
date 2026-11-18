@@ -22,6 +22,7 @@ import (
 	"openai-discord-bot/bot/storage"
 	"openai-discord-bot/config/awstrace"
 	"openai-discord-bot/gallery"
+	"openai-discord-bot/telemetry"
 )
 
 var (
@@ -155,7 +156,7 @@ func GetDiscordSession() (*discordgo.Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	discordSession.Client.Transport = otelhttp.NewTransport(http.DefaultTransport)
+	discordSession.Client.Transport = telemetry.DiscordTransport(otelhttp.NewTransport(http.DefaultTransport))
 	return discordSession, nil
 }
 

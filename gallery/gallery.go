@@ -29,6 +29,11 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Object keys, relative to the bucket root.
@@ -188,8 +193,22 @@ func New(cfg Config, store ObjectStore) *Gallery {
 // Publish adds an image to the gallery if its guild is eligible. It returns
 // nil without writing anything for DMs, excluded guilds, or a disabled
 // gallery. The caller decides how to treat errors; the bot only logs them.
-func (g *Gallery) Publish(ctx context.Context, s Submission) error {
-	if !g.cfg.Eligible(s.GuildID) {
+func (g *Gallery) Publish(ctx context.Context, s Submission) (err error) {
+	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "gallery.publish")
+	defer span.End()
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+	eligible := g.cfg.Eligible(s.GuildID)
+	span.SetAttributes(
+		attribute.Bool("gallery.eligible", eligible),
+		attribute.String("gallery.kind", string(s.Kind)),
+		attribute.Int("gallery.context_directives", len(s.Context)),
+	)
+	if !eligible {
 		return nil
 	}
 	entry, err := g.entryFor(s)
@@ -203,6 +222,7 @@ func (g *Gallery) Publish(ctx context.Context, s Submission) error {
 	if err != nil {
 		return fmt.Errorf("marshal sidecar: %w", err)
 	}
+	span.SetAttributes(attribute.Int("gallery.sidecar_bytes", len(sidecar)))
 	if err := g.store.Put(ctx, ItemPrefix+entry.ID+".json", sidecar, PutOptions{ContentType: "application/json"}); err != nil {
 		return fmt.Errorf("write sidecar: %w", err)
 	}
@@ -384,6 +404,12 @@ func (g *Gallery) addToManifest(ctx context.Context, keepExisting bool, entries 
 		} else {
 			opts.IfMatch = etag
 		}
+		span := trace.SpanFromContext(ctx)
+		span.SetAttributes(
+			attribute.Int("gallery.manifest_bytes", len(body)),
+			attribute.Int("gallery.manifest_items", len(next.Items)),
+			attribute.Int("gallery.manifest_attempts", attempt+1),
+		)
 		err = g.store.Put(ctx, ManifestKey, body, opts)
 		if err == nil {
 			return nil

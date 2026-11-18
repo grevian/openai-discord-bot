@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"openai-discord-bot/bot/flags"
 	"openai-discord-bot/bot/storage"
@@ -287,6 +288,24 @@ func recoverHandler(handler string) {
 	}
 }
 
+// String is the intent's name as recorded in the `intent` span attribute.
+func (i messageIntent) String() string {
+	switch i {
+	case intentDraw:
+		return "draw"
+	case intentEdit:
+		return "edit"
+	case intentEditNoImage:
+		return "edit_no_image"
+	case intentHelp:
+		return "help"
+	case intentSummarize:
+		return "summarize"
+	default:
+		return "chat"
+	}
+}
+
 func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	logger := slog.Default().WithGroup("messageCreate")
 	self := b.discord.BotUser()
@@ -323,6 +342,14 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 		return
 	}
 	logger.DebugContext(ctx, "loaded thread context", slog.Int("thread_length", len(threadPromptContext)))
+	threadChars := 0
+	for _, tm := range threadPromptContext {
+		threadChars += utf8.RuneCountInString(tm.Content)
+	}
+	span.SetAttributes(
+		attribute.Int("thread.messages", len(threadPromptContext)),
+		attribute.Int("thread.chars", threadChars),
+	)
 
 	// Let users know we're "typing", the call to OpenAI can take a few seconds
 	// A single ChannelTyping call lasts about 10 seconds, so keep refreshing it
@@ -337,6 +364,7 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	// Clean is asked for with 🫧 in the message text (not as a reaction), and
 	// is sticky: an edit of a clean image stays clean.
 	clean := hasCleanEmoji(m.Content) || (intent == intentEdit && source.clean)
+	span.SetAttributes(attribute.String("intent", intent.String()), attribute.Bool("clean", clean))
 
 	switch intent {
 	case intentHelp:
@@ -513,6 +541,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageMessage")
 	defer span.End()
+	span.SetAttributes(attribute.String("intent", intentDraw.String()), attribute.Bool("clean", clean))
 
 	// Record the prompt to our thread context
 	err = b.addThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), prompt)
@@ -541,7 +570,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		attribute.String("size", string(imageRequest.Size)),
 	)
 	openaiCtx, cancel := withTimeout(ctx, b.timeouts.OpenAIImage)
-	responseImage, err := b.images.Generate(openaiCtx, imageRequest)
+	responseImage, err := b.imagesGenerate(openaiCtx, imageRequest)
 	cancel()
 	if err != nil {
 		if isFatalOpenAIError(err) {
@@ -727,7 +756,8 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageEditMessage")
 	defer span.End()
-	span.SetAttributes(attribute.String("source_url", sourceURL))
+	span.SetAttributes(attribute.String("source_url", sourceURL),
+		attribute.String("intent", intentEdit.String()), attribute.Bool("clean", clean))
 	// With edit_thread_context on, the thread's earlier messages are condensed
 	// into directives for the prompt. Off, the request is the plain one.
 	useThreadContext := b.flags.Enabled(ctx, EditThreadContext)
@@ -794,7 +824,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	)
 
 	openaiCtx, cancel := withTimeout(ctx, b.timeouts.OpenAIImage)
-	responseImage, err := b.images.Edit(openaiCtx, editRequest)
+	responseImage, err := b.imagesEdit(openaiCtx, editRequest)
 	cancel()
 	if err != nil {
 		if isFatalOpenAIError(err) {
@@ -992,7 +1022,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	// OpenAI SDK itself (2 retries by default). Don't add a second retry layer
 	// on top: that multiplies the calls, and it retried non-retryable 4xx too.
 	openaiCtx, cancel := withTimeout(ctx, b.timeouts.OpenAIText)
-	response, err := b.responses.New(openaiCtx, request)
+	response, err := b.responsesNew(openaiCtx, opChat, request)
 	cancel()
 	if err != nil {
 		if isFatalOpenAIError(err) {
