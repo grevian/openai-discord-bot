@@ -6,7 +6,7 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
-  hostmetrics:
+  host_metrics:
     collection_interval: 60s
     scrapers:
       cpu:
@@ -35,23 +35,31 @@ receivers:
     priority: info
 
 processors:
+  # First in every pipeline. Sized for a small instance: the collector idles
+  # at ~40 MB RSS; it refuses data (the bot's SDK retries) from 75 MiB of Go
+  # heap and forces a GC at 100 MiB. GOMEMLIMIT=80MiB and MemoryMax=200M are
+  # set in the systemd unit (terraform/user-data.sh.tftpl).
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 100
+    spike_limit_mib: 25
   batch:
 
 exporters:
-  otlp/traces:
+  otlp_grpc/traces:
     endpoint: api.honeycomb.io:443
     headers:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
-  otlp/metrics:
+  otlp_grpc/metrics:
     endpoint: api.honeycomb.io:443
     headers:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
-  otlp/host_metrics:
+  otlp_grpc/host_metrics:
     endpoint: api.honeycomb.io:443
     headers:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
       x-honeycomb-dataset: "host_metrics"
-  otlp/logs:
+  otlp_grpc/logs:
     endpoint: api.honeycomb.io:443
     headers:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
@@ -60,21 +68,21 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch]
-      exporters: [otlp/traces]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_grpc/traces]
     metrics/application:
       receivers: [otlp]
-      processors: [batch]
-      exporters: [otlp/metrics]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_grpc/metrics]
     metrics/host:
-      receivers: [hostmetrics]
-      processors: [batch]
-      exporters: [otlp/host_metrics]
+      receivers: [host_metrics]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_grpc/host_metrics]
     logs:
       receivers: [otlp]
-      processors: [batch]
-      exporters: [otlp/logs]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_grpc/logs]
     logs/journald:
       receivers: [journald]
-      processors: [batch]
-      exporters: [otlp/logs]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_grpc/logs]
