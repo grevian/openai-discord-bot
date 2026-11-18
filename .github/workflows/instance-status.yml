@@ -51,6 +51,8 @@ jobs:
           echo "== bot unit"; systemctl show bot.service -p ExecMainStartTimestamp -p NRestarts -p MemoryCurrent -p User -p MainPID || true
           echo "== bot release"; readlink /opt/danbot/current; ls -l /opt/danbot/releases 2>&1 || true
           echo "== bot log (prepare, warnings and errors only)"; journalctl -u bot.service -n 200 --no-pager -o cat | grep -E "danbot-prepare|ERROR|WARN" | tail -n 15 | cut -c1-300 || true
+          echo "== bot unit state"; systemctl status bot.service --no-pager -l 2>&1 | grep -av danbot-prepare | tail -n 12 | cut -c1-300
+          echo "== bot journal (systemd and the process, last 30 lines)"; journalctl -u bot.service -n 60 --no-pager -o short-iso | grep -av "danbot-prepare" | tail -n 30 | cut -c1-300
           echo "== bot sandbox"; systemd-analyze security bot.service --no-pager 2>&1 | tail -n 2 || true
           echo "== bot container (legacy)"; if command -v docker >/dev/null; then docker ps --format "{{.Names}} {{.Status}} {{.Image}}"; else echo "docker not installed"; fi
           ' '{commands: ($s | split("\n"))}')
