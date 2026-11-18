@@ -43,6 +43,8 @@ docker build -t openaibot . && docker run --rm -it openaibot \
  -e AI_DISCORD_BOT_CONVERSATIONS_NAME=<dynamodb_table_name>
 ```
 
+`BOT_TRACING` and `BOT_METRICS` (both default `true`) export traces and the bot's memory metrics over OTLP to the collector named by the standard `OTEL_EXPORTER_OTLP_*` variables. The metrics are the Go runtime set (`go.memory.used`, `go.memory.limit`, `go.goroutine.count`, ...) and `process.memory.usage` (RSS), every minute. Set either to `false` when there is no collector.
+
 ### Operator settings
 
 These optional variables set the values that are specific to the operator's deployment. Unset or empty means the default shown, which is what the deployed bot uses.

@@ -33,6 +33,7 @@ func init() {
 	viper.SetDefault("DEBUG_LOGS", false)
 	viper.SetDefault("JSON_LOGS", true)
 	viper.SetDefault("TRACING", true)
+	viper.SetDefault("METRICS", true)
 	viper.SetDefault("OPENAIDISCORDBOTIMAGES_NAME", "")
 	viper.SetEnvPrefix("BOT")
 	viper.AutomaticEnv()
@@ -74,6 +75,13 @@ func Configure(serviceCtx context.Context) {
 		}
 	} else {
 		otel.SetTracerProvider(noop.NewTracerProvider())
+	}
+
+	if viper.GetBool("METRICS") {
+		logger.InfoContext(serviceCtx, "Configuring metrics")
+		if err := configureMetrics(serviceCtx); err != nil {
+			logger.ErrorContext(serviceCtx, "failed to initialize metrics", slog.Any("error", err))
+		}
 	}
 
 	logger.InfoContext(serviceCtx, "Configuring AWS Session")
