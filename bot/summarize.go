@@ -219,12 +219,13 @@ func (b *AIBot) handleSummarizeMessage(ctx context.Context, responseChannel, raw
 	}
 
 	// Thread context keeps the request and the summary, not the page text.
-	author := fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID)
-	for _, rec := range [][2]string{{author, "User: summarize " + pageURL}, {"Bot", summary}} {
-		if err := b.addThreadMessage(ctx, responseChannel, rec[0], rec[1]); err != nil {
-			span.RecordError(err)
-			logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", err))
-		}
+	if err := b.recordUser(ctx, responseChannel, m, "summarize "+pageURL); err != nil {
+		span.RecordError(err)
+		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", err))
+	}
+	if err := b.recordBot(ctx, responseChannel, summary); err != nil {
+		span.RecordError(err)
+		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", err))
 	}
 
 	// The reply is the last step: stop the typing indicator first so it
