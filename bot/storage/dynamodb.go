@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -33,12 +34,16 @@ type threadMessage struct {
 	Message         string
 }
 
-func NewStorage(cfg aws.Config) *Storage {
+func NewStorage(cfg aws.Config) (*Storage, error) {
+	table := viper.GetString("CONVERSATION_TABLE")
+	if table == "" {
+		return nil, fmt.Errorf("CONVERSATION_TABLE must be defined")
+	}
 	svc := dynamodb.NewFromConfig(cfg)
 	return &Storage{
 		client:    svc,
-		tableName: viper.Get("CONVERSATION_TABLE").(string),
-	}
+		tableName: table,
+	}, nil
 }
 
 func (s *Storage) GetThread(ctx context.Context, threadId string) ([]ConversationMessage, error) {

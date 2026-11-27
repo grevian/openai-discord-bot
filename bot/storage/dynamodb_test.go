@@ -1,6 +1,11 @@
 package storage
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/spf13/viper"
+)
 
 func TestThreadToConversationReversesNewestFirst(t *testing.T) {
 	got := threadToConversation([]threadMessage{
@@ -16,5 +21,12 @@ func TestThreadToConversationReversesNewestFirst(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("got %v want %v", got, want)
 		}
+	}
+}
+
+func TestNewStorageRequiresTable(t *testing.T) {
+	viper.Set("CONVERSATION_TABLE", "")
+	if _, err := NewStorage(aws.Config{}); err == nil {
+		t.Fatal("expected an error when CONVERSATION_TABLE is unset")
 	}
 }

@@ -69,6 +69,9 @@ func TestStripEditTriggers(t *testing.T) {
 		"EDIT: make it blue":    "make it blue",
 		"redraw it as a cat":    "it as a cat",
 		"Redraw it as a cat":    "it as a cat",
+		"eDiT: make it blue":    "make it blue",
+		"REDRAW it":             "it",
+		"it was redrawn":        "it was redrawn",
 		"  nothing to strip   ": "nothing to strip",
 	}
 	for in, want := range tests {

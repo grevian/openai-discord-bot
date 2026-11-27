@@ -121,7 +121,7 @@ func loadPromptFile(path string) (promptFile, error) {
 // isFatalOpenAIError reports whether err indicates a condition that won't
 // recover on retry: an exhausted quota or a revoked / invalid API key. When
 // true the caller should stop calling OpenAI and trigger process shutdown so
-// that ECS does not pile up a crash-loop of half-open Discord sessions.
+// that systemd does not pile up a crash-loop of half-open Discord sessions.
 func isFatalOpenAIError(err error) bool {
 	var apiErr *openai.Error
 	if !errors.As(err, &apiErr) {
@@ -881,12 +881,6 @@ func (b *AIBot) fetchSourceImage(ctx context.Context, sourceURL string) ([]byte,
 	return srcBytes, nil
 }
 
-// findEditSourceImage returns just the URL of findEditSource's result, or ""
-// when there is no source image.
-func (b *AIBot) findEditSourceImage(ctx context.Context, m *discordgo.MessageCreate) string {
-	return b.findEditSource(ctx, m).url
-}
-
 // editSource is the image an edit starts from.
 type editSource struct {
 	// url is where to fetch it; "" when there is none.
@@ -979,13 +973,13 @@ func stripDrawTriggers(prompt string) string {
 
 var drawPhrase = regexp.MustCompile(`(?i)draw me a picture of`)
 
+// editPhrase matches the text edit triggers in any casing; "redraw" only as a
+// whole word, so "redrawn" is left alone.
+var editPhrase = regexp.MustCompile(`(?i)\bedit:|\bredraw\b`)
+
 func stripEditTriggers(prompt string) string {
 	out := strings.ReplaceAll(prompt, "✏️", "")
-	out = strings.ReplaceAll(out, "edit:", "")
-	out = strings.ReplaceAll(out, "Edit:", "")
-	out = strings.ReplaceAll(out, "EDIT:", "")
-	out = strings.ReplaceAll(out, "redraw", "")
-	out = strings.ReplaceAll(out, "Redraw", "")
+	out = editPhrase.ReplaceAllString(out, "")
 	return strings.TrimSpace(out)
 }
 
