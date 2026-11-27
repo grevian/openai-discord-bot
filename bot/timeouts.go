@@ -44,17 +44,17 @@ type timeouts struct {
 
 func defaultTimeouts() timeouts {
 	return timeouts{
-		Request:       5 * time.Minute,
-		OpenAIText:    90 * time.Second,
-		OpenAIContext: 25 * time.Second,
+		Request:        5 * time.Minute,
+		OpenAIText:     90 * time.Second,
+		OpenAIContext:  25 * time.Second,
 		OpenAIDecision: 10 * time.Second,
 		OpenAIImage:    3 * time.Minute,
-		ImageSlotWait: defaultImageSlotWait,
-		Storage:       30 * time.Second,
-		Discord:       30 * time.Second,
-		Gallery:       20 * time.Second,
-		LinkExtract:   25 * time.Second,
-		TypingRefresh: 8 * time.Second,
+		ImageSlotWait:  defaultImageSlotWait,
+		Storage:        30 * time.Second,
+		Discord:        30 * time.Second,
+		Gallery:        20 * time.Second,
+		LinkExtract:    25 * time.Second,
+		TypingRefresh:  8 * time.Second,
 	}
 }
 
