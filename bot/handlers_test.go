@@ -412,8 +412,8 @@ func TestFindEditSourceImage(t *testing.T) {
 			tb := newTestBot(t)
 			m := mention("x")
 			tt.setup(tb.discord, m)
-			if got := tb.bot.findEditSourceImage(context.Background(), m); got != tt.want {
-				t.Errorf("findEditSourceImage = %q, want %q", got, tt.want)
+			if got := tb.bot.findEditSource(context.Background(), m).url; got != tt.want {
+				t.Errorf("findEditSource url = %q, want %q", got, tt.want)
 			}
 		})
 	}
