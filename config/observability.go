@@ -125,7 +125,14 @@ func configureLogging(serviceCtx context.Context) error {
 		)
 		otel.SetLoggerProvider(provider)
 
-		logger = otelslog.NewLogger("openai-discord-bot")
+		// Fan out to stderr (journald, `journalctl -u bot`) as well as OTLP, and
+		// apply programLevel to both: the SDK exports every level otherwise.
+		// The collector's journald receiver no longer reads bot.service, so
+		// nothing is shipped twice.
+		logger = slog.New(newLevelHandler(programLevel, newFanoutHandler(
+			slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}),
+			otelslog.NewHandler("openai-discord-bot"),
+		)))
 
 		// Rather than trying to return a shutdown function to main, call it based on the serviceContext being terminated
 		flushWG.Add(1)
