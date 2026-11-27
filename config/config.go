@@ -113,7 +113,7 @@ func GetBotSettings() bot.Settings {
 	return botSettings
 }
 
-func GetStorage() *storage.Storage {
+func GetStorage() (*storage.Storage, error) {
 	return storage.NewStorage(GetAWSConfig())
 }
 
@@ -154,13 +154,12 @@ func GetLogger() *slog.Logger {
 }
 
 func GetDiscordSession() (*discordgo.Session, error) {
-	discordAuthString := fmt.Sprintf("Bot %s", viper.GetString("DISCORD_TOKEN"))
-
-	if discordAuthString == "" {
+	token := strings.TrimSpace(viper.GetString("DISCORD_TOKEN"))
+	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN must be defined")
 	}
 
-	discordSession, err := discordgo.New(discordAuthString)
+	discordSession, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err
 	}

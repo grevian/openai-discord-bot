@@ -19,8 +19,8 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-X openai
 FROM alpine
 
 # Required at runtime (NOT baked into the image):
-#   BOT_DISCORD_TOKEN     - injected by start-bot.sh from SSM Parameter Store
-#   BOT_OPENAI_AUTH_TOKEN - injected by start-bot.sh from SSM Parameter Store
+#   BOT_DISCORD_TOKEN     - injected by danbot-prepare.sh from SSM Parameter Store
+#   BOT_OPENAI_AUTH_TOKEN - injected by danbot-prepare.sh from SSM Parameter Store
 # Locally, set these in your shell or a .env file consumed by your runner.
 
 # Soft memory limit for the Go runtime: past it the GC runs harder instead of

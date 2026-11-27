@@ -124,7 +124,7 @@ func loadPromptFile(path string) (promptFile, error) {
 // isFatalOpenAIError reports whether err indicates a condition that won't
 // recover on retry: an exhausted quota or a revoked / invalid API key. When
 // true the caller should stop calling OpenAI and trigger process shutdown so
-// that ECS does not pile up a crash-loop of half-open Discord sessions.
+// that systemd does not pile up a crash-loop of half-open Discord sessions.
 func isFatalOpenAIError(err error) bool {
 	var apiErr *openai.Error
 	if !errors.As(err, &apiErr) {
@@ -555,7 +555,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	defer release()
 
 	// Record the prompt to our thread context
-	err = b.addThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), prompt)
+	err = b.recordUser(ctx, responseChannel, m, prompt)
 	if err != nil {
 		return fmt.Errorf("failed to record drawing prompt: %w", err)
 	}
@@ -594,7 +594,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("a picture I drawed", clean), prompt, gallery.KindGenerate, editOrigin{}, m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("a picture I drawed", clean), prompt, gallery.KindGenerate, clean, editOrigin{}, m); err != nil {
 		return err
 	}
 
@@ -620,7 +620,7 @@ func firstImageB64(resp *openai.ImagesResponse) (string, error) {
 // their own reader over those bytes, so an S3 failure cannot truncate what
 // Discord receives, and a Discord failure cannot block the S3 upload. Both
 // finish before this returns.
-func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, responseChannel, b64, content, prompt string, kind gallery.Kind, origin editOrigin, m *discordgo.MessageCreate) error {
+func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, responseChannel, b64, content, prompt string, kind gallery.Kind, clean bool, origin editOrigin, m *discordgo.MessageCreate) error {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
 	image, err := base64.StdEncoding.DecodeString(b64)
@@ -638,7 +638,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 		defer wg.Done()
 		// This goroutine is outside the handler's recover, so it needs its own.
 		defer recoverHandler("archiveImage")
-		b.archiveImage(ctx, span, responseChannel, m.GuildID, id, image, prompt, kind, origin)
+		b.archiveImage(ctx, span, responseChannel, m.GuildID, id, image, prompt, kind, clean, origin)
 	}()
 
 	opt, cancel := b.discordCtx(ctx)
@@ -665,7 +665,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 // URL in the thread context. Failures are recorded and logged, not returned:
 // the user already has the image in Discord. Once the image is stored it is
 // also offered to the public gallery.
-func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID, id string, image []byte, prompt string, kind gallery.Kind, origin editOrigin) {
+func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID, id string, image []byte, prompt string, kind gallery.Kind, clean bool, origin editOrigin) {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
 	storeCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
@@ -682,13 +682,14 @@ func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChann
 		ImageKey:  imageKey,
 		Prompt:    b.galleryPrompt(prompt),
 		Kind:      kind,
+		Clean:     clean,
 		ParentKey: origin.parentKey,
 		Context:   origin.directives,
 	})
 
 	imageUrl := fmt.Sprintf("%s/%s", b.imageBaseURL, imageKey)
 
-	if err := b.addThreadMessage(ctx, responseChannel, "Bot", imageUrl); err != nil {
+	if err := b.recordBot(ctx, responseChannel, imageUrl); err != nil {
 		span.RecordError(err)
 		logger.ErrorContext(ctx, "failed to record image URL in thread context", slog.Any("error", err))
 	}
@@ -782,9 +783,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	}
 	defer release()
 
-	if err := b.addThreadMessage(ctx, responseChannel,
-		fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID),
-		fmt.Sprintf("edit: %s (source: %s)", prompt, sourceURL)); err != nil {
+	if err := b.recordEdit(ctx, responseChannel, m, prompt, sourceURL); err != nil {
 		return fmt.Errorf("failed to record edit prompt: %w", err)
 	}
 
@@ -856,7 +855,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("here ya go", clean), prompt, gallery.KindEdit, editOrigin{parentKey: source.parentKey, directives: directives}, m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("here ya go", clean), prompt, gallery.KindEdit, clean, editOrigin{parentKey: source.parentKey, directives: directives}, m); err != nil {
 		return err
 	}
 
@@ -896,12 +895,6 @@ func (b *AIBot) fetchSourceImage(ctx context.Context, sourceURL string) ([]byte,
 		return nil, errSourceImageTooLarge
 	}
 	return srcBytes, nil
-}
-
-// findEditSourceImage returns just the URL of findEditSource's result, or ""
-// when there is no source image.
-func (b *AIBot) findEditSourceImage(ctx context.Context, m *discordgo.MessageCreate) string {
-	return b.findEditSource(ctx, m).url
 }
 
 // editSource is the image an edit starts from.
@@ -996,13 +989,13 @@ func stripDrawTriggers(prompt string) string {
 
 var drawPhrase = regexp.MustCompile(`(?i)draw me a picture of`)
 
+// editPhrase matches the text edit triggers in any casing; "redraw" only as a
+// whole word, so "redrawn" is left alone.
+var editPhrase = regexp.MustCompile(`(?i)\bedit:|\bredraw\b`)
+
 func stripEditTriggers(prompt string) string {
 	out := strings.ReplaceAll(prompt, "✏️", "")
-	out = strings.ReplaceAll(out, "edit:", "")
-	out = strings.ReplaceAll(out, "Edit:", "")
-	out = strings.ReplaceAll(out, "EDIT:", "")
-	out = strings.ReplaceAll(out, "redraw", "")
-	out = strings.ReplaceAll(out, "Redraw", "")
+	out = editPhrase.ReplaceAllString(out, "")
 	return strings.TrimSpace(out)
 }
 
@@ -1023,7 +1016,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	for _, msg := range b.basePrompt {
 		addMsg(msg.Role, msg.Content)
 	}
-	for _, msg := range threadPromptContext {
+	for _, msg := range capChatContext(threadPromptContext, maxChatContextChars) {
 		addMsg(msg.Role, msg.Content)
 	}
 	addMsg("user", sanitizedUserPrompt)
@@ -1062,14 +1055,14 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	responseText = strings.Join(chunks, "\n\n")
 
 	// TODO It's weird that we're modifying the stored thread state here, but loaded it elsewhere
-	err = b.addThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+sanitizedUserPrompt)
+	err = b.recordUser(ctx, responseChannel, m, sanitizedUserPrompt)
 	if err != nil {
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
 		span.RecordError(warnErr)
 		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", warnErr))
 	}
 
-	err = b.addThreadMessage(ctx, responseChannel, "Bot", responseText)
+	err = b.recordBot(ctx, responseChannel, responseText)
 	if err != nil {
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
 		span.RecordError(warnErr)
