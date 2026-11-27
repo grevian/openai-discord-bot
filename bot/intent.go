@@ -36,11 +36,6 @@ const (
 	intentSummarize
 )
 
-// maxEditSourceBytes is the size at which a source image is refused for an
-// edit. openai-go documents the GPT image models (the ones edits here use)
-// as taking a png, webp or jpg "less than 50MB" per image, so a source of
-// this many bytes or more is too large. Sized images are checked against it,
-
 // editAtStart matches a message that opens with an edit trigger.
 var editAtStart = regexp.MustCompile(`^(✏️|edit:|redraw\b)`)
 
