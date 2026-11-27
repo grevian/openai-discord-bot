@@ -20,6 +20,8 @@ env:
   ASG_NAME: openai-discord-bot-prod
   # Fail the job if the refresh has not finished by then (seconds)
   REFRESH_TIMEOUT: "1200"
+  # Holds the git sha the instance runs (see deploy.yml)
+  SSM_IMAGE_TAG_PARAM: /openai-discord-bot/prod/image_tag
 
 jobs:
   refresh:
@@ -29,13 +31,14 @@ jobs:
     # Same group as deploy.yml and terraform.yml: no deploy restarts the bot
     # while the instance is being replaced.
     concurrency: production
-    timeout-minutes: 30
+    # refresh (20) + the health check below (up to ~25)
+    timeout-minutes: 60
     permissions:
       id-token: write
       contents: read
 
     steps:
-      # Only the local marker action is needed from the repo
+      # Only the local actions (the health check, the marker) are needed from the repo
       - uses: actions/checkout@v7
         with:
           sparse-checkout: .github/actions
@@ -120,6 +123,36 @@ jobs:
             fi
             sleep 20
           done
+
+      # The refresh only proves the ASG replaced the instance: the bot starts
+      # minutes later (dnf update, user-data, danbot-prepare). Check that the
+      # release in image_tag is up and healthy. Check only: no restart and no
+      # rollback, because the old instance is gone. Fresh credentials, since the
+      # first ones may be close to expiry after a long refresh.
+      - name: Configure AWS Credentials for the health check
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-duration-seconds: 1800
+
+      - name: Read the release the instance should run
+        id: tag
+        run: |
+          TAG=$(aws ssm get-parameter --name "$SSM_IMAGE_TAG_PARAM" --query Parameter.Value --output text)
+          if [[ ! "$TAG" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::$SSM_IMAGE_TAG_PARAM does not hold a release sha: '${TAG:0:60}'"
+            exit 1
+          fi
+          echo "sha=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Check the bot is healthy on the new instance
+        uses: ./.github/actions/bot-health
+        with:
+          expect-version: ${{ steps.tag.outputs.sha }}
+          restart: "false"
+          ready-timeout: "600"
+          instance-wait: "600"
 
       - name: Honeycomb marker
         if: success()
