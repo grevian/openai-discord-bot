@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,7 +13,6 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -25,60 +24,129 @@ import (
 	"openai-discord-bot/telemetry"
 )
 
-var (
-	awscfg      aws.Config
-	botSettings bot.Settings
+// Default values for settings the environment may leave out.
+const (
+	defaultAWSRegion  = "ca-central-1"
+	defaultPromptPath = "prompts/danbo.json"
 )
 
-func init() {
-	viper.SetDefault("DEBUG_LOGS", false)
-	viper.SetDefault("JSON_LOGS", true)
-	viper.SetDefault("TRACING", true)
-	viper.SetDefault("METRICS", true)
-	viper.SetDefault("OPENAIDISCORDBOTIMAGES_NAME", "")
-	viper.SetEnvPrefix("BOT")
-	viper.AutomaticEnv()
+// Config is every setting the bot reads from the environment, loaded once by
+// Load and passed explicitly. Environment variable names are a contract with
+// the deployment (user-data, README): don't rename them.
+type Config struct {
+	DebugLogs bool // BOT_DEBUG_LOGS, default false
+	JSONLogs  bool // BOT_JSON_LOGS, default true
+	OTLPLogs  bool // BOT_OTLP_LOGS, default false
+	Tracing   bool // BOT_TRACING, default true
+	Metrics   bool // BOT_METRICS, default true
 
-	if conversationsTableName, ok := os.LookupEnv("AI_DISCORD_BOT_CONVERSATIONS_NAME"); ok {
-		viper.Set("CONVERSATION_TABLE", conversationsTableName)
-	}
+	DiscordToken string // BOT_DISCORD_TOKEN (secret, required)
+	OpenAIToken  string // BOT_OPENAI_AUTH_TOKEN (secret, required)
+
+	ImagesBucket      string // BOT_OPENAIDISCORDBOTIMAGES_NAME, optional
+	ConversationTable string // AI_DISCORD_BOT_CONVERSATIONS_NAME, or BOT_CONVERSATION_TABLE
+	FlagsTable        string // BOT_FLAGS_TABLE, optional
+
+	AWSRegion  string // AWS_REGION, default ca-central-1
+	PromptPath string // BOT_PROMPT_PATH, default prompts/danbo.json
+
+	Bot bot.Settings
 }
 
-func Configure(serviceCtx context.Context) {
-	var err error
-	err = configureLogging(serviceCtx)
-	if err != nil {
-		panic(err)
+// Load reads the configuration through lookup (os.LookupEnv in production).
+// As before, an empty variable counts as unset.
+func Load(lookup func(string) (string, bool)) (Config, error) {
+	get := func(name string) string {
+		v, _ := lookup(name)
+		return v
 	}
-
-	logger := slog.Default()
-
-	configValues := viper.AllSettings()
-	configFields := make([]any, 0, len(configValues))
-	for k, v := range configValues {
-		if isSecretSetting(k) {
-			v = "<REDACTED>"
+	bot := func(name string) string { return get("BOT_" + name) }
+	flag := func(name string, def bool) bool {
+		raw := bot(name)
+		if raw == "" {
+			return def
 		}
-		configFields = append(configFields, slog.Any(k, v))
+		// Like viper's GetBool: anything strconv can't parse is false.
+		b, _ := strconv.ParseBool(raw)
+		return b
 	}
-	logger.DebugContext(serviceCtx, "Configuration Loaded", configFields...)
+	orDefault := func(v, def string) string {
+		if strings.TrimSpace(v) == "" {
+			return def
+		}
+		return strings.TrimSpace(v)
+	}
 
-	botSettings, err = loadBotSettings(viper.GetViper())
+	settings, err := loadBotSettings(bot)
 	if err != nil {
-		panic(err)
+		return Config{}, err
 	}
+	table := bot("CONVERSATION_TABLE")
+	if v := get("AI_DISCORD_BOT_CONVERSATIONS_NAME"); v != "" {
+		table = v
+	}
+	return Config{
+		DebugLogs:         flag("DEBUG_LOGS", false),
+		JSONLogs:          flag("JSON_LOGS", true),
+		OTLPLogs:          flag("OTLP_LOGS", false),
+		Tracing:           flag("TRACING", true),
+		Metrics:           flag("METRICS", true),
+		DiscordToken:      strings.TrimSpace(bot("DISCORD_TOKEN")),
+		OpenAIToken:       bot("OPENAI_AUTH_TOKEN"),
+		ImagesBucket:      bot("OPENAIDISCORDBOTIMAGES_NAME"),
+		ConversationTable: table,
+		FlagsTable:        strings.TrimSpace(bot("FLAGS_TABLE")),
+		AWSRegion:         orDefault(get("AWS_REGION"), defaultAWSRegion),
+		PromptPath:        orDefault(bot("PROMPT_PATH"), defaultPromptPath),
+		Bot:               settings,
+	}, nil
+}
 
-	if viper.GetBool("TRACING") {
+// LogValue lists the settings for the debug log, with secrets redacted.
+func (c Config) LogValue() slog.Value {
+	redact := func(s string) string {
+		if s == "" {
+			return ""
+		}
+		return "<REDACTED>"
+	}
+	return slog.GroupValue(
+		slog.Bool("debug_logs", c.DebugLogs), slog.Bool("json_logs", c.JSONLogs),
+		slog.Bool("otlp_logs", c.OTLPLogs), slog.Bool("tracing", c.Tracing),
+		slog.Bool("metrics", c.Metrics),
+		slog.String("discord_token", redact(c.DiscordToken)),
+		slog.String("openai_auth_token", redact(c.OpenAIToken)),
+		slog.String("kagi_api_key", redact(c.Bot.KagiAPIKey)),
+		slog.String("images_bucket", c.ImagesBucket),
+		slog.String("conversation_table", c.ConversationTable),
+		slog.String("flags_table", c.FlagsTable),
+		slog.String("aws_region", c.AWSRegion),
+		slog.String("prompt_path", c.PromptPath),
+		slog.String("operator_channel_id", c.Bot.OperatorChannelID),
+		slog.String("image_base_url", c.Bot.ImageBaseURL),
+		slog.String("owner_user_id", c.Bot.OwnerUserID),
+	)
+}
+
+// Configure sets up logging, tracing, metrics and the AWS SDK config, which
+// it returns. It must run before anything else logs.
+func Configure(serviceCtx context.Context, cfg Config) (aws.Config, error) {
+	if err := configureLogging(serviceCtx, cfg); err != nil {
+		return aws.Config{}, err
+	}
+	logger := slog.Default()
+	logger.DebugContext(serviceCtx, "Configuration Loaded", slog.Any("config", cfg))
+
+	if cfg.Tracing {
 		logger.InfoContext(serviceCtx, "Configuring tracing")
-		tracingErr := configureTracing(serviceCtx)
-		if tracingErr != nil {
-			logger.ErrorContext(serviceCtx, "failed to initialize tracer", slog.Any("error", tracingErr))
+		if err := configureTracing(serviceCtx); err != nil {
+			logger.ErrorContext(serviceCtx, "failed to initialize tracer", slog.Any("error", err))
 		}
 	} else {
 		otel.SetTracerProvider(noop.NewTracerProvider())
 	}
 
-	if viper.GetBool("METRICS") {
+	if cfg.Metrics {
 		logger.InfoContext(serviceCtx, "Configuring metrics")
 		if err := configureMetrics(serviceCtx); err != nil {
 			logger.ErrorContext(serviceCtx, "failed to initialize metrics", slog.Any("error", err))
@@ -86,75 +154,55 @@ func Configure(serviceCtx context.Context) {
 	}
 
 	logger.InfoContext(serviceCtx, "Configuring AWS Session")
-	// TODO Can I remove the region? And should I be using the serviceCtx here?
-	awscfg, err = config.LoadDefaultConfig(context.Background(), config.WithRegion("ca-central-1"))
+	awscfg, err := config.LoadDefaultConfig(serviceCtx, config.WithRegion(cfg.AWSRegion))
 	if err != nil {
-		panic(fmt.Sprintf("unable to load SDK config, %v", err))
+		return aws.Config{}, fmt.Errorf("unable to load SDK config: %w", err)
 	}
 	awstrace.AppendMiddlewares(&awscfg.APIOptions)
+	return awscfg, nil
 }
 
-// isSecretSetting reports whether the viper key k holds a secret that must
-// not be logged. viper lowercases keys, so compare without case.
-func isSecretSetting(k string) bool {
-	switch strings.ToUpper(k) {
-	case "DISCORD_TOKEN", "OPENAI_AUTH_TOKEN", "KAGI_API_KEY":
-		return true
-	}
-	return false
-}
-
-func GetAWSConfig() aws.Config {
-	return awscfg
-}
-
-// GetBotSettings returns the operator settings validated by Configure.
-func GetBotSettings() bot.Settings {
-	return botSettings
-}
-
-func GetStorage() (*storage.Storage, error) {
-	return storage.NewStorage(GetAWSConfig())
+func GetStorage(awscfg aws.Config, cfg Config) (*storage.Storage, error) {
+	return storage.NewStorage(awscfg, cfg.ConversationTable)
 }
 
 // GetFlagsBackend returns the feature flag store, or nil (defaults only)
 // when BOT_FLAGS_TABLE is not set.
-func GetFlagsBackend() flags.Backend {
-	table := strings.TrimSpace(viper.GetString("FLAGS_TABLE"))
-	if table == "" {
+func GetFlagsBackend(awscfg aws.Config, cfg Config) flags.Backend {
+	if cfg.FlagsTable == "" {
 		slog.Warn("BOT_FLAGS_TABLE is not set, feature flags stay at their defaults")
 		return nil
 	}
-	return flags.NewDynamoBackend(GetAWSConfig(), table)
+	return flags.NewDynamoBackend(awscfg, cfg.FlagsTable)
 }
 
-func GetImageStorage() *storage.ImageStorage {
-	return storage.NewImageStorage(GetAWSConfig(), viper.GetString("OPENAIDISCORDBOTIMAGES_NAME"))
+func GetImageStorage(awscfg aws.Config, cfg Config) *storage.ImageStorage {
+	return storage.NewImageStorage(awscfg, cfg.ImagesBucket)
 }
 
 // GetGallery returns the public gallery publisher, or nil when the images
 // bucket is not configured or the gallery's policy cannot be loaded. The
 // gallery is optional, so problems here are logged, never fatal.
-func GetGallery() *gallery.Gallery {
-	bucket := viper.GetString("OPENAIDISCORDBOTIMAGES_NAME")
+func GetGallery(awscfg aws.Config, cfg Config) *gallery.Gallery {
+	bucket := cfg.ImagesBucket
 	if bucket == "" {
 		slog.Warn("no images bucket configured, the gallery is disabled")
 		return nil
 	}
-	cfg, err := gallery.LoadConfig()
+	gcfg, err := gallery.LoadConfig()
 	if err != nil {
 		slog.Error("failed to load the gallery config, the gallery is disabled", slog.Any("error", err))
 		return nil
 	}
-	return gallery.New(cfg, gallery.NewS3Store(GetAWSConfig(), bucket))
+	return gallery.New(gcfg, gallery.NewS3Store(awscfg, bucket))
 }
 
 func GetLogger() *slog.Logger {
 	return slog.Default()
 }
 
-func GetDiscordSession() (*discordgo.Session, error) {
-	token := strings.TrimSpace(viper.GetString("DISCORD_TOKEN"))
+func GetDiscordSession(cfg Config) (*discordgo.Session, error) {
+	token := cfg.DiscordToken
 	if token == "" {
 		return nil, fmt.Errorf("DISCORD_TOKEN must be defined")
 	}
@@ -167,8 +215,8 @@ func GetDiscordSession() (*discordgo.Session, error) {
 	return discordSession, nil
 }
 
-func GetOpenAISession() (openai.Client, error) {
-	authToken := viper.GetString("OPENAI_AUTH_TOKEN")
+func GetOpenAISession(cfg Config) (openai.Client, error) {
+	authToken := cfg.OpenAIToken
 	if authToken == "" {
 		return openai.Client{}, fmt.Errorf("no authToken is present in configuration")
 	}

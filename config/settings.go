@@ -6,8 +6,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/spf13/viper"
-
 	"openai-discord-bot/bot"
 )
 
@@ -20,19 +18,24 @@ const (
 	defaultImageBaseURL = "https://sillybullshit.click"
 )
 
-// loadBotSettings reads the operator-specific settings from v and validates
-// them. Unset or empty variables fall back to the defaults above, so a
-// deployment that sets nothing behaves exactly as before.
-func loadBotSettings(v *viper.Viper) (bot.Settings, error) {
-	v.SetDefault("OPERATOR_CHANNEL_ID", defaultOperatorChannelID)
-	v.SetDefault("IMAGE_BASE_URL", defaultImageBaseURL)
-
-	channelID := strings.TrimSpace(v.GetString("OPERATOR_CHANNEL_ID"))
+// loadBotSettings reads the operator-specific settings through get (which
+// takes the name without the BOT_ prefix) and validates them. Unset or empty
+// variables fall back to the defaults above, so a deployment that sets
+// nothing behaves exactly as before.
+func loadBotSettings(get func(string) string) (bot.Settings, error) {
+	channelID := strings.TrimSpace(get("OPERATOR_CHANNEL_ID"))
+	if channelID == "" {
+		channelID = defaultOperatorChannelID
+	}
 	if !isSnowflake(channelID) {
 		return bot.Settings{}, fmt.Errorf("BOT_OPERATOR_CHANNEL_ID must be a Discord channel ID (17-20 digits), got %q", channelID)
 	}
 
-	imageBaseURL, err := parseImageBaseURL(v.GetString("IMAGE_BASE_URL"))
+	rawBase := get("IMAGE_BASE_URL")
+	if rawBase == "" {
+		rawBase = defaultImageBaseURL
+	}
+	imageBaseURL, err := parseImageBaseURL(rawBase)
 	if err != nil {
 		return bot.Settings{}, err
 	}
@@ -41,16 +44,16 @@ func loadBotSettings(v *viper.Viper) (bot.Settings, error) {
 		OperatorChannelID: channelID,
 		ImageBaseURL:      imageBaseURL,
 		// Optional: empty disables link summaries.
-		KagiAPIKey:  strings.TrimSpace(v.GetString("KAGI_API_KEY")),
-		OwnerUserID: ownerUserID(v),
+		KagiAPIKey:  strings.TrimSpace(get("KAGI_API_KEY")),
+		OwnerUserID: ownerUserID(get),
 	}, nil
 }
 
 // ownerUserID reads BOT_OWNER_USER_ID. It is optional: empty, or an invalid
 // value (logged), turns the owner-only flag command off rather than
 // stopping the bot, because a typo in it should not take the bot down.
-func ownerUserID(v *viper.Viper) string {
-	id := strings.TrimSpace(v.GetString("OWNER_USER_ID"))
+func ownerUserID(get func(string) string) string {
+	id := strings.TrimSpace(get("OWNER_USER_ID"))
 	if id != "" && !isSnowflake(id) {
 		slog.Error("BOT_OWNER_USER_ID must be a Discord user ID (17-20 digits); the flag command is disabled", slog.String("value", id))
 		return ""

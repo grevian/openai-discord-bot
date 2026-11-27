@@ -9,7 +9,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/spf13/viper"
 )
 
 const maxThreadMessages = 100
@@ -34,10 +33,9 @@ type threadMessage struct {
 	Message         string
 }
 
-func NewStorage(cfg aws.Config) (*Storage, error) {
-	table := viper.GetString("CONVERSATION_TABLE")
+func NewStorage(cfg aws.Config, table string) (*Storage, error) {
 	if table == "" {
-		return nil, fmt.Errorf("CONVERSATION_TABLE must be defined")
+		return nil, fmt.Errorf("the conversation table name must be defined (AI_DISCORD_BOT_CONVERSATIONS_NAME)")
 	}
 	svc := dynamodb.NewFromConfig(cfg)
 	return &Storage{

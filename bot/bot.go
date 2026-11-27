@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"runtime/debug"
@@ -117,10 +116,24 @@ func loadPromptFile(path string) (promptFile, error) {
 	return pf, nil
 }
 
-func NewAIBot(botCtx context.Context, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage, settings Settings, flagCache *flags.Flags) *AIBot {
-	prompt, err := loadPromptFile("prompts/danbo.json")
+// Options is everything NewAIBot needs. Flags may be nil (defaults only).
+type Options struct {
+	OpenAI       openai.Client
+	Discord      *discordgo.Session
+	Storage      *storage.Storage
+	ImageStorage *storage.ImageStorage
+	Settings     Settings
+	Flags        *flags.Flags
+	// PromptPath is the persona file (prompts/danbo.json).
+	PromptPath string
+}
+
+func NewAIBot(botCtx context.Context, opts Options) (*AIBot, error) {
+	aiClient, discordSession, threadStorage, imageStorage := opts.OpenAI, opts.Discord, opts.Storage, opts.ImageStorage
+	settings, flagCache := opts.Settings, opts.Flags
+	prompt, err := loadPromptFile(opts.PromptPath)
 	if err != nil {
-		log.Panic(err)
+		return nil, err
 	}
 
 	bot := &AIBot{
@@ -158,7 +171,7 @@ func NewAIBot(botCtx context.Context, aiClient openai.Client, discordSession *di
 	discordSession.AddHandler(bot.ReadyHandler)
 	discordSession.AddHandler(bot.messageCreate)
 
-	return bot
+	return bot, nil
 }
 
 // SetGallery enables publishing generated images to the public gallery.
