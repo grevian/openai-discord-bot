@@ -183,7 +183,7 @@ func TestEditFlagOnFallsBackOnCondenseTimeout(t *testing.T) {
 	}
 }
 
-func TestEditFlagOnFatalCondenseErrorStillShutsDownLikeOtherCalls(t *testing.T) {
+func TestEditFlagOnFatalCondenseErrorStillLatchesDegradedMode(t *testing.T) {
 	// A revoked key or exhausted quota is process-fatal everywhere else, and
 	// the condense call shares the key, so it reports the same way. The edit
 	// itself still proceeds (it will hit the same error and fail on its own).
@@ -192,8 +192,8 @@ func TestEditFlagOnFatalCondenseErrorStillShutsDownLikeOtherCalls(t *testing.T) 
 		return nil, &openai.Error{StatusCode: 429, Code: "insufficient_quota"}
 	}
 	tb.bot.handleMessage(context.Background(), editMention("edit: add a dog"))
-	if tb.shutdownCount() != 1 {
-		t.Errorf("expected shutdown on a fatal condense error, got %d", tb.shutdownCount())
+	if !tb.bot.degraded.Load() {
+		t.Error("expected degraded mode on a fatal condense error")
 	}
 }
 

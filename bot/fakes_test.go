@@ -456,7 +456,6 @@ type testBot struct {
 	images    *fakeImages
 	responses *fakeResponses
 	calls     *callLog
-	shutdowns int
 	mu        sync.Mutex
 }
 
@@ -478,7 +477,6 @@ func newTestBot(t *testing.T) *testBot {
 		images:              tb.images,
 		responses:           tb.responses,
 		botCtx:              context.Background(),
-		shutdown:            func() { tb.mu.Lock(); tb.shutdowns++; tb.mu.Unlock() },
 		discord:             tb.discord,
 		systemInstructions:  testSysInst,
 		drawingInstructions: testDrawing,
@@ -495,12 +493,6 @@ func newTestBot(t *testing.T) *testBot {
 		flags:             NewFlags(nil),
 	}
 	return tb
-}
-
-func (tb *testBot) shutdownCount() int {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
-	return tb.shutdowns
 }
 
 // mention builds a message from userID in channelID that mentions the bot.

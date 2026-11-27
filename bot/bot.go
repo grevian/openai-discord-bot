@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"openai-discord-bot/bot/flags"
@@ -51,10 +52,13 @@ type Settings struct {
 }
 
 type AIBot struct {
-	images              imageAPI
-	responses           responsesAPI
-	botCtx              context.Context
-	shutdown            context.CancelFunc
+	images    imageAPI
+	responses responsesAPI
+	botCtx    context.Context
+	// degraded latches when OpenAI reports a fatal error (exhausted quota,
+	// bad key). Requests that need OpenAI then get msgDegraded without a
+	// call; the latch clears on restart or by the retry_openai flag.
+	degraded            atomic.Bool
 	discord             discordAPI
 	systemInstructions  string
 	drawingInstructions string
@@ -120,8 +124,9 @@ func loadPromptFile(path string) (promptFile, error) {
 
 // isFatalOpenAIError reports whether err indicates a condition that won't
 // recover on retry: an exhausted quota or a revoked / invalid API key. When
-// true the caller should stop calling OpenAI and trigger process shutdown so
-// that ECS does not pile up a crash-loop of half-open Discord sessions.
+// true the caller should stop calling OpenAI and latch degraded mode (see
+// handleFatalOpenAIError); exiting would only make systemd restart the bot
+// into the same failure.
 func isFatalOpenAIError(err error) bool {
 	var apiErr *openai.Error
 	if !errors.As(err, &apiErr) {
@@ -133,7 +138,7 @@ func isFatalOpenAIError(err error) bool {
 	return apiErr.Code == "insufficient_quota" || apiErr.Code == "invalid_api_key"
 }
 
-func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage, settings Settings, flagCache *flags.Flags) *AIBot {
+func NewAIBot(botCtx context.Context, _ context.CancelFunc, aiClient openai.Client, discordSession *discordgo.Session, threadStorage *storage.Storage, imageStorage *storage.ImageStorage, settings Settings, flagCache *flags.Flags) *AIBot {
 	prompt, err := loadPromptFile("prompts/danbo.json")
 	if err != nil {
 		log.Panic(err)
@@ -144,7 +149,6 @@ func NewAIBot(botCtx context.Context, shutdown context.CancelFunc, aiClient open
 		images:              leanImages{&aiClient.Images},
 		responses:           &aiClient.Responses,
 		botCtx:              botCtx,
-		shutdown:            shutdown,
 		systemInstructions:  prompt.Instructions,
 		drawingInstructions: prompt.DrawingInstructions,
 		editInstructions:    prompt.EditInstructions,
@@ -366,6 +370,16 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	clean := hasCleanEmoji(m.Content) || (intent == intentEdit && source.clean)
 	span.SetAttributes(attribute.String("intent", intent.String()), attribute.Bool("clean", clean))
 
+	if b.isDegraded(ctx) && intent != intentHelp && intent != intentEditNoImage {
+		span.SetAttributes(attribute.Bool("degraded", true))
+		stopTyping()
+		err = b.sendMessage(ctx, responseChannel, msgDegraded)
+		if err != nil {
+			b.reportError(ctx, span, responseChannel, msgGeneric, err)
+		}
+		return
+	}
+
 	switch intent {
 	case intentHelp:
 		err = b.sendMessage(ctx, responseChannel, helpText(b.imageBaseURL))
@@ -394,6 +408,7 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 const (
 	msgInvalidRequest = "OpenAI's content policy blocked that one. I've seen worse in Thunder Bay, but I can't make it. Try rewording it, maybe something less grim."
 	msgBusy           = "Ugh, I'm swamped right now, and I have a feeling it'll stay that way. Please try again in a minute."
+	msgDegraded       = "Ugh. I can't think right now, something is wrong with my brain, and I've told the person who can fix it. I can still hang around, though. Try again later."
 	msgGeneric        = "Gah! Something broke while I was working on that, and it's probably my fault. Please try again."
 )
 
@@ -419,6 +434,9 @@ func newUserError(msg string, err error) error { return &userError{msg: msg, err
 // failureMessage is the text posted to the channel when handling a message
 // failed with err. It never includes the error's own text.
 func failureMessage(err error) string {
+	if isFatalOpenAIError(err) {
+		return msgDegraded
+	}
 	var ue *userError
 	if errors.As(err, &ue) {
 		return ue.UserMessage()
@@ -1108,9 +1126,9 @@ func (b *AIBot) handleThreading(ctx context.Context, m *discordgo.MessageCreate)
 }
 
 // handleFatalOpenAIError logs the terminal OpenAI failure with enough detail
-// to identify the cause in CloudWatch (quota vs revoked key), then triggers a
-// graceful process shutdown so main.go can close the Discord session cleanly.
-// Repeated calls are safe — context.CancelFunc is idempotent.
+// to identify the cause (quota vs revoked key) and latches degraded mode: the
+// bot stays online but stops calling OpenAI. The operator channel is told
+// once per latch. Repeated calls are safe.
 func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 	logger := slog.Default().WithGroup("openai")
 	var apiErr *openai.Error
@@ -1122,10 +1140,27 @@ func (b *AIBot) handleFatalOpenAIError(ctx context.Context, err error) {
 			slog.String("openai_error_code", apiErr.Code),
 		)
 	}
-	logger.ErrorContext(ctx, "Unrecoverable OpenAI error; triggering shutdown", attrs...)
-	if b.shutdown != nil {
-		b.shutdown()
+	logger.ErrorContext(ctx, "Unrecoverable OpenAI error; entering degraded mode", attrs...)
+	if !b.degraded.Swap(true) {
+		notice := "Gah! OpenAI rejected me (quota or API key). I'm staying online but won't call OpenAI until I'm restarted, or the `retry_openai` flag is set to true."
+		if nerr := b.sendMessage(context.WithoutCancel(ctx), b.operatorChannelID, notice); nerr != nil {
+			logger.ErrorContext(ctx, "failed to notify operator of degraded mode", slog.Any("error", nerr))
+		}
 	}
+}
+
+// isDegraded reports whether OpenAI calls are suspended. The retry_openai
+// flag clears the latch, so the next request tries OpenAI again and a still
+// fatal error re-latches (and re-notifies the operator).
+func (b *AIBot) isDegraded(ctx context.Context) bool {
+	if !b.degraded.Load() {
+		return false
+	}
+	if b.flags.Enabled(ctx, RetryOpenAI) {
+		b.degraded.Store(false)
+		return false
+	}
+	return true
 }
 
 // Shutdown tells the operator the bot is going away. ctx bounds the goodbye

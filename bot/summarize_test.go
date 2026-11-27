@@ -284,11 +284,11 @@ func TestSummarizeOpenAIFailureIsGeneric(t *testing.T) {
 		return nil, &openai.Error{StatusCode: http.StatusUnauthorized}
 	}
 	tb.bot.handleMessage(context.Background(), mention("https://example.com/a"))
-	if sent := tb.discord.sentMessages(); len(sent) != 1 || sent[0].Content != msgGeneric {
+	if sent := tb.discord.sentMessages(); len(sent) != 2 || sent[1].Content != msgDegraded {
 		t.Errorf("sent %+v", sent)
 	}
-	if tb.shutdownCount() != 1 {
-		t.Error("a fatal OpenAI error should shut the bot down")
+	if !tb.bot.degraded.Load() {
+		t.Error("a fatal OpenAI error should latch degraded mode")
 	}
 }
 
