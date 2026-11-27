@@ -643,8 +643,9 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 
 	opt, cancel := b.discordCtx(ctx)
 	_, err = b.discord.ChannelMessageSendComplex(responseChannel, &discordgo.MessageSend{
-		Content:   content,
-		Reference: m.Reference(),
+		Content:         content,
+		Reference:       m.Reference(),
+		AllowedMentions: defaultAllowedMentions(),
 		File: &discordgo.File{
 			Name:        uploadName(id),
 			ContentType: "image/png",
@@ -1029,7 +1030,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 
 	request := responses.ResponseNewParams{
 		Model:        chatModel,
-		Instructions: openai.String(b.systemInstructions),
+		Instructions: openai.String(b.systemInstructions + "\n\n" + lengthHint),
 		Reasoning:    shared.ReasoningParam{Effort: chatReasoningEffort},
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: inputItems,
@@ -1055,6 +1056,11 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 		return errors.New("failed to get response from openai: received an empty response")
 	}
 
+	// Discord rejects content over 2000 characters: split (and cap) the reply
+	// first so the stored thread matches what is actually posted.
+	chunks := splitReply(responseText, discordMessageLimit, maxReplyMessages)
+	responseText = strings.Join(chunks, "\n\n")
+
 	// TODO It's weird that we're modifying the stored thread state here, but loaded it elsewhere
 	err = b.addThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+sanitizedUserPrompt)
 	if err != nil {
@@ -1073,9 +1079,10 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	// The reply is the last step: stop the typing indicator first so it
 	// cannot be refreshed while the reply is being posted.
 	stopTypingFromContext(ctx)
-	err = b.sendMessage(ctx, responseChannel, responseText)
-	if err != nil {
-		return fmt.Errorf("failed to respond to discord channel: %w", err)
+	for _, chunk := range chunks {
+		if err = b.sendMessage(ctx, responseChannel, chunk); err != nil {
+			return fmt.Errorf("failed to respond to discord channel: %w", err)
+		}
 	}
 
 	span.SetStatus(codes.Ok, "Success")
