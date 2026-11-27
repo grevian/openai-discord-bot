@@ -2,7 +2,9 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 
@@ -144,6 +146,7 @@ type tokenUsage struct{ input, output int64 }
 // responsesNew calls the Responses API inside an "openai <op>" span.
 func (b *AIBot) responsesNew(ctx context.Context, op aiOperation, req responses.ResponseNewParams) (*responses.Response, error) {
 	ctx, call, opt := startAICall(ctx, op, "chat", string(req.Model))
+	call.setInputJSON(req.Input, req.Instructions.Value)
 	resp, err := b.responses.New(ctx, req, opt)
 	if err != nil || resp == nil {
 		call.finish(err, "", "", nil)
@@ -153,6 +156,12 @@ func (b *AIBot) responsesNew(ctx context.Context, op aiOperation, req responses.
 	if resp.Usage.TotalTokens > 0 {
 		u = &tokenUsage{resp.Usage.InputTokens, resp.Usage.OutputTokens}
 	}
+	out := textMessage("assistant", resp.OutputText())
+	out.FinishReason = "stop"
+	if resp.Status == responses.ResponseStatusIncomplete {
+		out.FinishReason = "length"
+	}
+	call.setOutput(out)
 	call.finish(nil, resp.ID, string(resp.Model), u)
 	return resp, nil
 }
@@ -161,6 +170,7 @@ func (b *AIBot) responsesNew(ctx context.Context, op aiOperation, req responses.
 // SDK retries once: the caller falls back to chat on any failure.
 func (b *AIBot) decisionsNew(ctx context.Context, req openai.DecisionNewParams) (*openai.Decision, error) {
 	ctx, call, opt := startAICall(ctx, opDispatch, "chat", req.Model)
+	call.setInputJSON(req.Input, "")
 	resp, err := b.decisions.New(ctx, req, opt, option.WithMaxRetries(1))
 	if err != nil || resp == nil {
 		call.finish(err, "", "", nil)
@@ -172,8 +182,27 @@ func (b *AIBot) decisionsNew(ctx context.Context, req openai.DecisionNewParams) 
 		// output tokens at the chat model's rate.
 		u = &tokenUsage{input: resp.Usage.InputTokens}
 	}
+	if len(resp.Answers) > 0 {
+		answers := make([]json.RawMessage, len(resp.Answers))
+		for i, a := range resp.Answers {
+			answers[i] = json.RawMessage(a.RawJSON())
+		}
+		out := textMessage("assistant", string(mustJSON(answers)))
+		out.FinishReason = "stop"
+		call.setOutput(out)
+	}
 	call.finish(nil, "", resp.Model, u)
 	return resp, nil
+}
+
+// setImageOutput notes the result without the image bytes.
+func setImageOutput(call *aiCall, resp *openai.ImagesResponse, err error) {
+	if err != nil || resp == nil {
+		return
+	}
+	out := textMessage("assistant", fmt.Sprintf("[%d image(s) generated; not recorded]", len(resp.Data)))
+	out.FinishReason = "stop"
+	call.setOutput(out)
 }
 
 func imageUsage(r *openai.ImagesResponse) *tokenUsage {
@@ -186,7 +215,9 @@ func imageUsage(r *openai.ImagesResponse) *tokenUsage {
 // imagesGenerate calls the image generation API inside an "openai draw" span.
 func (b *AIBot) imagesGenerate(ctx context.Context, req openai.ImageGenerateParams) (*openai.ImagesResponse, error) {
 	ctx, call, opt := startAICall(ctx, opDraw, "image_generation", string(req.Model))
+	call.setInput([]genAIMessage{textMessage("user", req.Prompt)}, nil)
 	resp, err := b.images.Generate(ctx, req, opt)
+	setImageOutput(call, resp, err)
 	call.finish(err, "", "", imageUsage(resp))
 	return resp, err
 }
@@ -194,7 +225,9 @@ func (b *AIBot) imagesGenerate(ctx context.Context, req openai.ImageGeneratePara
 // imagesEdit calls the image edit API inside an "openai edit" span.
 func (b *AIBot) imagesEdit(ctx context.Context, req openai.ImageEditParams) (*openai.ImagesResponse, error) {
 	ctx, call, opt := startAICall(ctx, opEdit, "image_edit", string(req.Model))
+	call.setInput([]genAIMessage{textMessage("user", req.Prompt+"\n[source image omitted]")}, nil)
 	resp, err := b.images.Edit(ctx, req, opt)
+	setImageOutput(call, resp, err)
 	call.finish(err, "", "", imageUsage(resp))
 	return resp, err
 }
