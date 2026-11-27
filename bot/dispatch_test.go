@@ -239,7 +239,8 @@ func TestDispatchRequestShape(t *testing.T) {
 	if p.Model != "gpt-6-luna" || p.SafetyIdentifier.Value != userID {
 		t.Errorf("model %q safety %q", p.Model, p.SafetyIdentifier.Value)
 	}
-	for _, want := range []string{"🎨", "✏️", "📰", "MUST"} {
+	// danbot-20: visual verbs that must steer the model to draw.
+	for _, want := range []string{"🎨", "✏️", "📰", "MUST", "visualize", "picture", "manifest an image"} {
 		if !strings.Contains(rich, want) {
 			t.Errorf("request lacks %q", want)
 		}
