@@ -176,7 +176,7 @@ func TestFailureMessage(t *testing.T) {
 		{"plain", errors.New("kaboom secret"), msgGeneric},
 		{"rate limit", &openai.Error{StatusCode: http.StatusTooManyRequests, Code: "rate_limit_exceeded"}, msgBusy},
 		{"overloaded", &openai.Error{StatusCode: http.StatusServiceUnavailable}, msgBusy},
-		{"quota is not busy", &openai.Error{StatusCode: http.StatusTooManyRequests, Code: "insufficient_quota"}, msgGeneric},
+		{"quota is degraded, not busy", &openai.Error{StatusCode: http.StatusTooManyRequests, Code: "insufficient_quota"}, msgDegraded},
 		{"content policy", &openai.Error{StatusCode: http.StatusBadRequest, Code: "content_policy_violation"}, msgInvalidRequest},
 		{"moderation", &openai.Error{StatusCode: http.StatusBadRequest, Code: "moderation_blocked"}, msgInvalidRequest},
 		{"wrapped content policy", fmt.Errorf("w: %w", &openai.Error{StatusCode: http.StatusBadRequest, Code: "content_policy_violation"}), msgInvalidRequest},
@@ -184,7 +184,7 @@ func TestFailureMessage(t *testing.T) {
 		{"user error nil cause", newUserError("hi", nil), "hi"},
 		{"500", &openai.Error{StatusCode: http.StatusInternalServerError}, msgGeneric},
 		{"user error", fmt.Errorf("w: %w", newUserError("too big", errors.New("internal"))), "too big"},
-		{"401", &openai.Error{StatusCode: http.StatusUnauthorized}, msgGeneric},
+		{"401", &openai.Error{StatusCode: http.StatusUnauthorized}, msgDegraded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

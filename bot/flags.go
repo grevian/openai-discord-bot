@@ -21,3 +21,9 @@ var EditThreadContext = flagRegistry.Bool("edit_thread_context", false,
 func NewFlags(backend flags.Backend) *flags.Flags {
 	return flags.New(flagRegistry, backend)
 }
+
+// RetryOpenAI clears degraded mode (entered on a fatal OpenAI error such as
+// an exhausted quota or revoked key) so the next request calls OpenAI again.
+// Set it after fixing the cause; it can stay on. Checked by isDegraded.
+var RetryOpenAI = flagRegistry.Bool("retry_openai", false,
+	"retry OpenAI after degraded mode (set once quota or key is fixed)")

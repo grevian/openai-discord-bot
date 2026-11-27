@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"openai-discord-bot/bot/flags"
 	"openai-discord-bot/bot/storage"
 
 	"github.com/bwmarrin/discordgo"
@@ -126,11 +127,40 @@ func TestChatCompletionFatalErrorShutsDown(t *testing.T) {
 		return nil, &openai.Error{StatusCode: http.StatusUnauthorized}
 	}
 	tb.bot.handleMessage(context.Background(), mention("hello"))
-	if tb.shutdownCount() != 1 {
-		t.Errorf("expected shutdown to be triggered once, got %d", tb.shutdownCount())
+	if !tb.bot.degraded.Load() {
+		t.Error("expected degraded mode")
 	}
 	if n := tb.responses.callCount(); n != 1 {
 		t.Errorf("a fatal error must not be retried, got %d calls", n)
+	}
+	sent := tb.discord.sentMessages()
+	if len(sent) != 2 || sent[0].Channel != testOperatorChannel || sent[1].Content != msgDegraded {
+		t.Errorf("want one operator notice then the degraded reply, got %+v", sent)
+	}
+
+	// A second request makes no OpenAI call, gets the canned reply, and does
+	// not notify the operator again.
+	tb.bot.handleMessage(context.Background(), mention("hello again"))
+	if n := tb.responses.callCount(); n != 1 {
+		t.Errorf("degraded mode must not call OpenAI, got %d calls", n)
+	}
+	sent = tb.discord.sentMessages()
+	if len(sent) != 3 || sent[2].Content != msgDegraded {
+		t.Errorf("unexpected messages %+v", sent)
+	}
+}
+
+func TestDegradedModeBlocksDrawButNotHelp(t *testing.T) {
+	tb := newTestBot(t)
+	tb.bot.degraded.Store(true)
+	tb.bot.handleMessage(context.Background(), mention("🎨 a cat"))
+	if len(tb.images.generated) != 0 {
+		t.Error("draw must not call OpenAI while degraded")
+	}
+	tb.bot.handleMessage(context.Background(), mention("help"))
+	sent := tb.discord.sentMessages()
+	if len(sent) != 2 || sent[0].Content != msgDegraded || sent[1].Content == msgDegraded {
+		t.Errorf("unexpected messages %+v", sent)
 	}
 }
 
@@ -288,8 +318,8 @@ func TestDrawFatalErrorShutsDown(t *testing.T) {
 		return nil, &openai.Error{StatusCode: http.StatusTooManyRequests, Code: "insufficient_quota"}
 	}
 	tb.bot.handleMessage(context.Background(), mention("🎨 a cat"))
-	if tb.shutdownCount() != 1 {
-		t.Errorf("expected shutdown, got %d", tb.shutdownCount())
+	if !tb.bot.degraded.Load() {
+		t.Error("expected degraded mode")
 	}
 }
 
@@ -419,13 +449,6 @@ func TestFindEditSourceImage(t *testing.T) {
 	}
 }
 
-func TestHandleFatalOpenAIErrorWithoutShutdown(t *testing.T) {
-	tb := newTestBot(t)
-	tb.bot.shutdown = nil
-	// Must not panic when no shutdown function is configured.
-	tb.bot.handleFatalOpenAIError(context.Background(), &openai.Error{StatusCode: http.StatusUnauthorized})
-}
-
 func equalStored(a, b []storedMessage) bool {
 	if len(a) != len(b) {
 		return false
@@ -477,6 +500,31 @@ func TestSessionDiscordReadsState(t *testing.T) {
 	}
 	if _, err := s.StateChannel("missing"); err == nil {
 		t.Error("expected an error for an unknown channel")
+	}
+}
+
+type retryBackend struct{ raw string }
+
+func (r retryBackend) LoadAll(context.Context) (map[string]flags.Value, error) {
+	return map[string]flags.Value{RetryOpenAI.Name(): {Name: RetryOpenAI.Name(), Raw: r.raw}}, nil
+}
+func (retryBackend) Put(context.Context, flags.Change) error { return nil }
+
+func TestRetryOpenAIFlagClearsDegradedMode(t *testing.T) {
+	tb := newTestBot(t)
+	tb.bot.degraded.Store(true)
+	tb.bot.handleMessage(context.Background(), mention("hello"))
+	if n := tb.responses.callCount(); n != 0 {
+		t.Fatalf("degraded: %d OpenAI calls", n)
+	}
+	f := NewFlags(retryBackend{raw: "true"})
+	if err := f.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tb.bot.flags = f
+	tb.bot.handleMessage(context.Background(), mention("hello"))
+	if tb.bot.degraded.Load() || tb.responses.callCount() != 1 {
+		t.Errorf("degraded=%v calls=%d, want cleared and one call", tb.bot.degraded.Load(), tb.responses.callCount())
 	}
 }
 
