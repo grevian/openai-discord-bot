@@ -48,7 +48,7 @@ func main() {
 	flagCache := bot.NewFlags(config.GetFlagsBackend())
 	go flagCache.Run(serviceCtx, time.Minute)
 
-	botInstance := bot.NewAIBot(serviceCtx, cancel, openapiClient, discordSession, convStorage, config.GetImageStorage(), config.GetBotSettings(), flagCache)
+	botInstance := bot.NewAIBot(serviceCtx, openapiClient, discordSession, convStorage, config.GetImageStorage(), config.GetBotSettings(), flagCache)
 
 	if g := config.GetGallery(); g != nil {
 		botInstance.SetGallery(g)
