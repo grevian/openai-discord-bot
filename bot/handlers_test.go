@@ -253,7 +253,7 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 	}
 
 	want := []storedMessage{
-		{channelID, "alice (user-1) on guild-1", "a cat"},
+		{channelID, "alice (user-1) on guild-1", "User: a cat"},
 		{channelID, "Bot", testImageBaseURL + "/guild-1/" + stored[0].ID},
 	}
 	if got := tb.threads.addedMessages(); !equalStored(got, want) {
@@ -342,7 +342,7 @@ func TestEditUsesAttachment(t *testing.T) {
 		t.Fatalf("unexpected Discord messages %+v", sent)
 	}
 	added := tb.threads.addedMessages()
-	if len(added) == 0 || added[0].Message != "edit: add a hat (source: "+srcURL+")" {
+	if len(added) == 0 || added[0].Message != "User: edit: add a hat (source: "+srcURL+")" {
 		t.Errorf("unexpected stored messages %+v", added)
 	}
 }

@@ -544,7 +544,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 	span.SetAttributes(attribute.String("intent", intentDraw.String()), attribute.Bool("clean", clean))
 
 	// Record the prompt to our thread context
-	err = b.addThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), prompt)
+	err = b.recordUser(ctx, responseChannel, m, prompt)
 	if err != nil {
 		return fmt.Errorf("failed to record drawing prompt: %w", err)
 	}
@@ -678,7 +678,7 @@ func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChann
 
 	imageUrl := fmt.Sprintf("%s/%s", b.imageBaseURL, imageKey)
 
-	if err := b.addThreadMessage(ctx, responseChannel, "Bot", imageUrl); err != nil {
+	if err := b.recordBot(ctx, responseChannel, imageUrl); err != nil {
 		span.RecordError(err)
 		logger.ErrorContext(ctx, "failed to record image URL in thread context", slog.Any("error", err))
 	}
@@ -765,9 +765,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	useThreadContext := b.flags.Enabled(ctx, EditThreadContext)
 	span.SetAttributes(attribute.Bool("flag.edit_thread_context", useThreadContext))
 
-	if err := b.addThreadMessage(ctx, responseChannel,
-		fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID),
-		fmt.Sprintf("edit: %s (source: %s)", prompt, sourceURL)); err != nil {
+	if err := b.recordEdit(ctx, responseChannel, m, prompt, sourceURL); err != nil {
 		return fmt.Errorf("failed to record edit prompt: %w", err)
 	}
 
@@ -1000,7 +998,7 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	for _, msg := range b.basePrompt {
 		addMsg(msg.Role, msg.Content)
 	}
-	for _, msg := range threadPromptContext {
+	for _, msg := range capChatContext(threadPromptContext, maxChatContextChars) {
 		addMsg(msg.Role, msg.Content)
 	}
 	addMsg("user", sanitizedUserPrompt)
@@ -1039,14 +1037,14 @@ func (b *AIBot) handleCompletionPrompt(ctx context.Context, responseChannel stri
 	responseText = strings.Join(chunks, "\n\n")
 
 	// TODO It's weird that we're modifying the stored thread state here, but loaded it elsewhere
-	err = b.addThreadMessage(ctx, responseChannel, fmt.Sprintf("%s (%s) on %s", m.Author.Username, m.Author.ID, m.GuildID), "User: "+sanitizedUserPrompt)
+	err = b.recordUser(ctx, responseChannel, m, sanitizedUserPrompt)
 	if err != nil {
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
 		span.RecordError(warnErr)
 		logger.WarnContext(ctx, "non-fatal error updating thread context", slog.Any("error", warnErr))
 	}
 
-	err = b.addThreadMessage(ctx, responseChannel, "Bot", responseText)
+	err = b.recordBot(ctx, responseChannel, responseText)
 	if err != nil {
 		warnErr := fmt.Errorf("failed to record conversation message: %w", err)
 		span.RecordError(warnErr)
