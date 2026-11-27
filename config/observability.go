@@ -10,7 +10,6 @@ import (
 
 	"openai-discord-bot/telemetry"
 
-	"github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/detectors/aws/ec2/v2"
 	"go.opentelemetry.io/otel"
@@ -104,11 +103,11 @@ func WaitFlushed(ctx context.Context) error {
 var programLevel = new(slog.LevelVar)
 
 // configureLogging sets up the logging system for the service, either local text, local json, or otlp based opentelemetry logging,
-// through the slog package, based on configuration from viper settings and OTLP environment variables
-func configureLogging(serviceCtx context.Context) error {
+// through the slog package, based on cfg and OTLP environment variables
+func configureLogging(serviceCtx context.Context, cfg Config) error {
 	var err error
 	var logger *slog.Logger
-	if viper.GetBool("OTLP_LOGS") {
+	if cfg.OTLPLogs {
 		exp, err := otlploggrpc.New(context.Background())
 		if err != nil {
 			return err
@@ -146,13 +145,13 @@ func configureLogging(serviceCtx context.Context) error {
 				logger.ErrorContext(serviceCtx, "Failed to flush logging data", slog.Any("error", err))
 			}
 		}(serviceCtx)
-	} else if viper.GetBool("JSON_LOGS") {
+	} else if cfg.JSONLogs {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel}))
 	} else {
 		logger = slog.Default()
 	}
 
-	if viper.GetBool("DEBUG_LOGS") {
+	if cfg.DebugLogs {
 		programLevel.Set(slog.LevelDebug)
 	}
 

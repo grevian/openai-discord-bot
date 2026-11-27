@@ -1,25 +1,21 @@
 package config
 
 import (
+	"os"
 	"testing"
-
-	"github.com/spf13/viper"
 )
 
-// newSettingsViper mirrors the global viper setup in init(): BOT_ prefix,
-// read from the environment.
-func newSettingsViper() *viper.Viper {
-	v := viper.New()
-	v.SetEnvPrefix("BOT")
-	v.AutomaticEnv()
-	return v
+// newSettings returns the getter loadBotSettings takes, reading BOT_<name>
+// from the process environment.
+func newSettings() func(string) string {
+	return func(name string) string { return os.Getenv("BOT_" + name) }
 }
 
 func TestLoadBotSettingsDefaults(t *testing.T) {
 	t.Setenv("BOT_OPERATOR_CHANNEL_ID", "")
 	t.Setenv("BOT_IMAGE_BASE_URL", "")
 
-	got, err := loadBotSettings(newSettingsViper())
+	got, err := loadBotSettings(newSettings())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -35,7 +31,7 @@ func TestLoadBotSettingsFromEnv(t *testing.T) {
 	t.Setenv("BOT_OPERATOR_CHANNEL_ID", " 123456789012345678 ")
 	t.Setenv("BOT_IMAGE_BASE_URL", "https://images.example.org/archive/")
 
-	got, err := loadBotSettings(newSettingsViper())
+	got, err := loadBotSettings(newSettings())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -69,7 +65,7 @@ func TestLoadBotSettingsRejectsInvalid(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BOT_OPERATOR_CHANNEL_ID", tc.channel)
 			t.Setenv("BOT_IMAGE_BASE_URL", tc.baseURL)
-			if _, err := loadBotSettings(newSettingsViper()); err == nil {
+			if _, err := loadBotSettings(newSettings()); err == nil {
 				t.Fatalf("expected an error for channel=%q base=%q", tc.channel, tc.baseURL)
 			}
 		})
@@ -80,26 +76,15 @@ func TestLoadBotSettingsKagiKey(t *testing.T) {
 	t.Setenv("BOT_OPERATOR_CHANNEL_ID", "")
 	t.Setenv("BOT_IMAGE_BASE_URL", "")
 	t.Setenv("BOT_KAGI_API_KEY", "")
-	got, err := loadBotSettings(newSettingsViper())
+	got, err := loadBotSettings(newSettings())
 	if err != nil || got.KagiAPIKey != "" {
 		t.Fatalf("unset key: (%q, %v), want empty and no error", got.KagiAPIKey, err)
 	}
 
 	t.Setenv("BOT_KAGI_API_KEY", " k-123 \n")
-	got, err = loadBotSettings(newSettingsViper())
+	got, err = loadBotSettings(newSettings())
 	if err != nil || got.KagiAPIKey != "k-123" {
 		t.Fatalf("set key: (%q, %v), want trimmed k-123", got.KagiAPIKey, err)
-	}
-}
-
-func TestIsSecretSetting(t *testing.T) {
-	for _, k := range []string{"discord_token", "OPENAI_AUTH_TOKEN", "kagi_api_key"} {
-		if !isSecretSetting(k) {
-			t.Errorf("%s should be redacted", k)
-		}
-	}
-	if isSecretSetting("image_base_url") {
-		t.Error("image_base_url is not a secret")
 	}
 }
 
@@ -116,7 +101,7 @@ func TestLoadBotSettingsOwnerUserID(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Setenv("BOT_OWNER_USER_ID", tc.in)
-		got, err := loadBotSettings(newSettingsViper())
+		got, err := loadBotSettings(newSettings())
 		if err != nil || got.OwnerUserID != tc.want {
 			t.Errorf("BOT_OWNER_USER_ID=%q: (%q, %v), want %q and no error", tc.in, got.OwnerUserID, err, tc.want)
 		}

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/spf13/viper"
 )
 
 func TestThreadToConversationReversesNewestFirst(t *testing.T) {
@@ -25,8 +24,7 @@ func TestThreadToConversationReversesNewestFirst(t *testing.T) {
 }
 
 func TestNewStorageRequiresTable(t *testing.T) {
-	viper.Set("CONVERSATION_TABLE", "")
-	if _, err := NewStorage(aws.Config{}); err == nil {
+	if _, err := NewStorage(aws.Config{}, ""); err == nil {
 		t.Fatal("expected an error when CONVERSATION_TABLE is unset")
 	}
 }

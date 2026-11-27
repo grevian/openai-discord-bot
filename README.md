@@ -56,6 +56,8 @@ These optional variables set the values that are specific to the operator's depl
 
 The bot refuses to start if either value is invalid.
 
+`AWS_REGION` (default `ca-central-1`) sets the AWS region and `BOT_PROMPT_PATH` (default `prompts/danbo.json`) the persona file.
+
 `BOT_OWNER_USER_ID` (optional) is the Discord user ID (17–20 digits) of the bot owner, the only user who may change feature flags. Unset or invalid (logged) turns the flag command off; the bot still starts. `BOT_FLAGS_TABLE` (optional) is the DynamoDB table that stores the flags. Unset means every flag stays at its default and can't be changed. In production both come from `danbot-prepare.sh` (see Deployment).
 
 ### Feature flags (owner only)
