@@ -67,8 +67,11 @@ type AIBot struct {
 	storage             threadStore
 	imageStorage        imageStore
 	timeouts            timeouts
-	operatorChannelID   string
-	imageBaseURL        string
+	// imageSlots limits concurrent image generate and edit requests. Nil
+	// means no limit.
+	imageSlots        imageSlots
+	operatorChannelID string
+	imageBaseURL      string
 	// gallery publishes images to the public gallery. Nil disables it.
 	gallery galleryPublisher
 	// links extracts page text for link summaries. Nil means summaries are
@@ -157,6 +160,7 @@ func NewAIBot(botCtx context.Context, _ context.CancelFunc, aiClient openai.Clie
 		storage:             threadStorage,
 		imageStorage:        imageStorage,
 		timeouts:            defaultTimeouts(),
+		imageSlots:          newImageSlots(defaultMaxConcurrentImages),
 		operatorChannelID:   settings.OperatorChannelID,
 		imageBaseURL:        settings.ImageBaseURL,
 		flags:               flagCache,
@@ -555,11 +559,18 @@ func waitOrCancel(ctx context.Context, wg *sync.WaitGroup, onTimeout func()) err
 }
 
 func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, prompt string, clean bool, m *discordgo.MessageCreate) error {
-	var err error
-
 	ctx, span := otel.GetTracerProvider().Tracer("AIBot").Start(ctx, "handleImageMessage")
 	defer span.End()
 	span.SetAttributes(attribute.String("intent", intentDraw.String()), attribute.Bool("clean", clean))
+
+	// Held until the image is sent and archived: the bytes stay in memory
+	// that long. Taken before anything is recorded, so a busy reply leaves
+	// no trace in the thread.
+	release, err := b.imageSlots.acquire(ctx, b.timeouts.ImageSlotWait)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	// Record the prompt to our thread context
 	err = b.recordUser(ctx, responseChannel, m, prompt)
@@ -782,6 +793,13 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 	// into directives for the prompt. Off, the request is the plain one.
 	useThreadContext := b.flags.Enabled(ctx, EditThreadContext)
 	span.SetAttributes(attribute.Bool("flag.edit_thread_context", useThreadContext))
+
+	// Held until the edited image is sent and archived (see the draw path).
+	release, err := b.imageSlots.acquire(ctx, b.timeouts.ImageSlotWait)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	if err := b.recordEdit(ctx, responseChannel, m, prompt, sourceURL); err != nil {
 		return fmt.Errorf("failed to record edit prompt: %w", err)

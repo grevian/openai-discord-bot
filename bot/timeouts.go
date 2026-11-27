@@ -23,6 +23,8 @@ type timeouts struct {
 	OpenAIContext time.Duration
 	// OpenAIImage bounds one image generate or edit call, including retries.
 	OpenAIImage time.Duration
+	// ImageSlotWait bounds the wait for a free image concurrency slot.
+	ImageSlotWait time.Duration
 	// Storage bounds one DynamoDB or S3 call, or one source-image fetch.
 	Storage time.Duration
 	// Discord bounds one Discord REST call.
@@ -43,6 +45,7 @@ func defaultTimeouts() timeouts {
 		OpenAIText:    90 * time.Second,
 		OpenAIContext: 25 * time.Second,
 		OpenAIImage:   3 * time.Minute,
+		ImageSlotWait: defaultImageSlotWait,
 		Storage:       30 * time.Second,
 		Discord:       30 * time.Second,
 		Gallery:       20 * time.Second,
