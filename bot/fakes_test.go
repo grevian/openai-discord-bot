@@ -442,6 +442,32 @@ func imageResponse(b64 string) *openai.ImagesResponse {
 	return &openai.ImagesResponse{Data: []openai.Image{{B64JSON: b64}}}
 }
 
+// fakeDecisions is an in-memory decisionsAPI.
+type fakeDecisions struct {
+	mu    sync.Mutex
+	log   *callLog
+	fn    func(context.Context, openai.DecisionNewParams) (*openai.Decision, error)
+	calls []openai.DecisionNewParams
+}
+
+func (f *fakeDecisions) New(ctx context.Context, p openai.DecisionNewParams, _ ...option.RequestOption) (*openai.Decision, error) {
+	f.log.record("openai.Decisions.New", ctx)
+	f.mu.Lock()
+	f.calls = append(f.calls, p)
+	fn := f.fn
+	f.mu.Unlock()
+	if fn == nil {
+		return nil, errors.New("unexpected Decisions.New call")
+	}
+	return fn(ctx, p)
+}
+
+func (f *fakeDecisions) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
 // testBot bundles an AIBot with the fakes behind it.
 type testBot struct {
 	bot       *AIBot
@@ -450,6 +476,7 @@ type testBot struct {
 	imgStore  *fakeImageStore
 	images    *fakeImages
 	responses *fakeResponses
+	decisions *fakeDecisions
 	calls     *callLog
 }
 
@@ -462,6 +489,7 @@ func newTestBot(t *testing.T) *testBot {
 		imgStore:  newFakeImageStore(),
 		images:    &fakeImages{log: calls},
 		responses: &fakeResponses{log: calls},
+		decisions: &fakeDecisions{log: calls},
 		calls:     calls,
 	}
 	tb.discord.log = calls
@@ -470,6 +498,7 @@ func newTestBot(t *testing.T) *testBot {
 	tb.bot = &AIBot{
 		images:              tb.images,
 		responses:           tb.responses,
+		decisions:           tb.decisions,
 		botCtx:              context.Background(),
 		discord:             tb.discord,
 		systemInstructions:  testSysInst,

@@ -79,6 +79,16 @@ func summarizeTarget(prompt string) (string, bool) {
 	return "", false
 }
 
+// firstLink returns the first http(s) URL in text, trimmed as a summary
+// target is.
+func firstLink(text string) (string, bool) {
+	loc := linkURL.FindStringSubmatchIndex(text)
+	if loc == nil {
+		return "", false
+	}
+	return trimLinkEnd(text[loc[2]:loc[3]]), true
+}
+
 // trimLinkEnd removes what usually follows a link in prose rather than being
 // part of it: sentence punctuation, a spoiler's closing "||", and a closing
 // ")" from a markdown link "[x](url)" or a parenthesised "(url)". A ")" that

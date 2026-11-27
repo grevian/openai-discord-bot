@@ -21,6 +21,9 @@ type timeouts struct {
 	// for an image edit. It is kept well under OpenAIText: the edit goes on
 	// without the context when it expires.
 	OpenAIContext time.Duration
+	// OpenAIDecision bounds the Decisions API call that guesses what a plain
+	// message wants. The message is chatted when it expires.
+	OpenAIDecision time.Duration
 	// OpenAIImage bounds one image generate or edit call, including retries.
 	OpenAIImage time.Duration
 	// ImageSlotWait bounds the wait for a free image concurrency slot.
@@ -41,16 +44,17 @@ type timeouts struct {
 
 func defaultTimeouts() timeouts {
 	return timeouts{
-		Request:       5 * time.Minute,
-		OpenAIText:    90 * time.Second,
-		OpenAIContext: 25 * time.Second,
-		OpenAIImage:   3 * time.Minute,
-		ImageSlotWait: defaultImageSlotWait,
-		Storage:       30 * time.Second,
-		Discord:       30 * time.Second,
-		Gallery:       20 * time.Second,
-		LinkExtract:   25 * time.Second,
-		TypingRefresh: 8 * time.Second,
+		Request:        5 * time.Minute,
+		OpenAIText:     90 * time.Second,
+		OpenAIContext:  25 * time.Second,
+		OpenAIDecision: 10 * time.Second,
+		OpenAIImage:    3 * time.Minute,
+		ImageSlotWait:  defaultImageSlotWait,
+		Storage:        30 * time.Second,
+		Discord:        30 * time.Second,
+		Gallery:        20 * time.Second,
+		LinkExtract:    25 * time.Second,
+		TypingRefresh:  8 * time.Second,
 	}
 }
 

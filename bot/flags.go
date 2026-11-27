@@ -16,6 +16,12 @@ var flagRegistry = flags.NewRegistry()
 var EditThreadContext = flagRegistry.Bool("edit_thread_context", false,
 	"include thread or reply-chain context in image edit prompts")
 
+// IntentDecisions asks the OpenAI Decisions API what a plain-text mention
+// wants (draw, edit, summarize, help, feedback, idea) when no emoji or keyword
+// trigger matched. The check is in handleMessage.
+var IntentDecisions = flagRegistry.Bool("intent_decisions", false,
+	"guess draw/edit/summarize/help/feedback from plain text with the OpenAI Decisions API")
+
 // NewFlags returns the flag cache for the bot's registry over backend. A nil
 // backend means defaults only.
 func NewFlags(backend flags.Backend) *flags.Flags {
