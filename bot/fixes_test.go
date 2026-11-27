@@ -550,3 +550,22 @@ func TestStreamedEditSourceReadIsBounded(t *testing.T) {
 		t.Error("an oversized streamed source must not be sent to OpenAI")
 	}
 }
+
+func TestDrainingAndDegradedAccessors(t *testing.T) {
+	tb := newTestBot(t)
+	if tb.bot.Draining() || tb.bot.Degraded() {
+		t.Fatal("fresh bot should be neither draining nor degraded")
+	}
+	tb.bot.degraded.Store(true)
+	if !tb.bot.Degraded() {
+		t.Error("Degraded() false after the latch was set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := tb.bot.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !tb.bot.Draining() {
+		t.Error("Draining() false after Drain")
+	}
+}

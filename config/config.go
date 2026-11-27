@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 const (
 	defaultAWSRegion  = "ca-central-1"
 	defaultPromptPath = "prompts/danbo.json"
+	defaultHealthAddr = "127.0.0.1:8086"
 )
 
 // Config is every setting the bot reads from the environment, loaded once by
@@ -51,6 +53,7 @@ type Config struct {
 
 	AWSRegion  string // AWS_REGION, default ca-central-1
 	PromptPath string // BOT_PROMPT_PATH, default prompts/danbo.json
+	HealthAddr string // BOT_HEALTH_ADDR, default 127.0.0.1:8086; "off" disables (empty here)
 
 	Bot bot.Settings
 }
@@ -83,6 +86,10 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	healthAddr, err := parseHealthAddr(bot("HEALTH_ADDR"))
+	if err != nil {
+		return Config{}, err
+	}
 	table := bot("CONVERSATION_TABLE")
 	if v := get("AI_DISCORD_BOT_CONVERSATIONS_NAME"); v != "" {
 		table = v
@@ -101,8 +108,29 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		FeedbackTable:     strings.TrimSpace(bot("FEEDBACK_TABLE")),
 		AWSRegion:         orDefault(get("AWS_REGION"), defaultAWSRegion),
 		PromptPath:        orDefault(bot("PROMPT_PATH"), defaultPromptPath),
+		HealthAddr:        healthAddr,
 		Bot:               settings,
 	}, nil
+}
+
+// parseHealthAddr validates BOT_HEALTH_ADDR: unset gives the default, "off"
+// gives "" (disabled), anything else must be host:port with a port of 1-65535.
+func parseHealthAddr(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultHealthAddr, nil
+	}
+	if strings.EqualFold(raw, "off") {
+		return "", nil
+	}
+	_, port, err := net.SplitHostPort(raw)
+	if err != nil {
+		return "", fmt.Errorf("BOT_HEALTH_ADDR %q: %w", raw, err)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("BOT_HEALTH_ADDR %q: port must be 1-65535", raw)
+	}
+	return raw, nil
 }
 
 // LogValue lists the settings for the debug log, with secrets redacted.
@@ -126,6 +154,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("feedback_table", c.FeedbackTable),
 		slog.String("aws_region", c.AWSRegion),
 		slog.String("prompt_path", c.PromptPath),
+		slog.String("health_addr", c.HealthAddr),
 		slog.String("operator_channel_id", c.Bot.OperatorChannelID),
 		slog.String("image_base_url", c.Bot.ImageBaseURL),
 		slog.String("owner_user_id", c.Bot.OwnerUserID),

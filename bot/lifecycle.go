@@ -99,3 +99,14 @@ func (b *AIBot) Shutdown(ctx context.Context) {
 	span.RecordError(err)
 	span.End()
 }
+
+// Draining reports whether the bot has stopped accepting new messages.
+func (b *AIBot) Draining() bool {
+	b.lifeMu.Lock()
+	defer b.lifeMu.Unlock()
+	return b.draining
+}
+
+// Degraded reports whether OpenAI degraded mode is latched. It only reads the
+// latch: isDegraded may clear it through the retry flag.
+func (b *AIBot) Degraded() bool { return b.degraded.Load() }

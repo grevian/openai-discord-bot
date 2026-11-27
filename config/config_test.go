@@ -101,3 +101,17 @@ func TestGetFeedbackStoreNilWhenUnset(t *testing.T) {
 		t.Error("want a store when the table is set")
 	}
 }
+
+func TestLoadHealthAddr(t *testing.T) {
+	for in, want := range map[string]string{"": "127.0.0.1:8086", "0.0.0.0:9000": "0.0.0.0:9000", "off": ""} {
+		c, err := Load(lookupFrom(map[string]string{"BOT_HEALTH_ADDR": in}))
+		if err != nil || c.HealthAddr != want {
+			t.Errorf("%q: got %q, %v; want %q", in, c.HealthAddr, err, want)
+		}
+	}
+	for _, bad := range []string{"nonsense", "127.0.0.1:99999", "127.0.0.1:0", "127.0.0.1:abc"} {
+		if _, err := Load(lookupFrom(map[string]string{"BOT_HEALTH_ADDR": bad})); err == nil {
+			t.Errorf("%q: expected an error", bad)
+		}
+	}
+}
