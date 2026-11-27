@@ -11,6 +11,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"openai-discord-bot/bot/storage"
 
@@ -182,6 +183,9 @@ func (f *fakeDiscord) ChannelMessageSend(id, content string, opts ...discordgo.R
 	defer f.mu.Unlock()
 	if f.sendErr != nil {
 		return nil, f.sendErr
+	}
+	if utf8.RuneCountInString(content) > 2000 {
+		return nil, errors.New("HTTP 400 Bad Request: Must be 2000 or fewer in length")
 	}
 	f.sent = append(f.sent, sentMessage{Channel: id, Content: content})
 	return &discordgo.Message{ChannelID: id, Content: content}, nil

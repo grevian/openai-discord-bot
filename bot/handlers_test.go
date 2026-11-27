@@ -67,7 +67,7 @@ func TestChatCompletion(t *testing.T) {
 	if req.Reasoning.Effort != "low" {
 		t.Errorf("reasoning effort = %q, want low", req.Reasoning.Effort)
 	}
-	if req.Instructions.Value != testSysInst {
+	if req.Instructions.Value != testSysInst+"\n\n"+lengthHint {
 		t.Errorf("instructions = %q", req.Instructions.Value)
 	}
 	items := req.Input.OfInputItemList
