@@ -56,11 +56,17 @@ func (b *AIBot) handleFeedback(ctx context.Context, responseChannel string, inte
 
 	text, truncated := truncateRunes(text, maxFeedbackRunes)
 	span.SetAttributes(attribute.Int("feedback.chars", len([]rune(text))))
+	// The message's own timestamp, so a redelivery of the same message gets
+	// the same sort key and the store's conditional put drops the duplicate.
+	created := m.Timestamp
+	if created.IsZero() {
+		created = time.Now()
+	}
 	it := feedback.Item{
 		Kind:       kind,
 		Text:       text,
 		Truncated:  truncated,
-		CreatedAt:  time.Now(),
+		CreatedAt:  created,
 		UserID:     m.Author.ID,
 		Username:   m.Author.Username,
 		GuildID:    m.GuildID,

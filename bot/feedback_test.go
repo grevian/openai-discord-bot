@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"openai-discord-bot/bot/feedback"
 
@@ -214,5 +215,20 @@ func TestHelpMentionsFeedback(t *testing.T) {
 	h := helpText(testImageBaseURL)
 	if !strings.Contains(h, "feedback") || len(h) > 2000 {
 		t.Errorf("help reply (%d chars) must mention feedback", len(h))
+	}
+}
+
+func TestRedeliveredFeedbackGetsSameSortKey(t *testing.T) {
+	tb, fs := withFeedback(t)
+	ts := time.Date(2025, 11, 27, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 2; i++ {
+		m := mention("feedback once")
+		m.Timestamp = ts
+		tb.bot.handleMessage(context.Background(), m)
+		time.Sleep(2 * time.Millisecond)
+	}
+	items := fs.stored()
+	if len(items) != 2 || items[0].SortKey() != items[1].SortKey() || items[0].SortKey() != feedback.SortKey(ts, "msg-1") {
+		t.Fatalf("redelivery must reuse the sort key: %+v", items)
 	}
 }
