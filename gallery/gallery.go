@@ -54,9 +54,12 @@ const (
 	KindEdit     Kind = "edit"
 )
 
-// Style is the persona an image was drawn in. Only the danbot style exists
-// today; recording it lets a future "clean" style be filtered out.
-const StyleDanbot = "danbot"
+// Style is the persona an image was drawn in. Recording it lets clean images
+// (asked for with 🫧, prompt sent as written) be told apart from danbot ones.
+const (
+	StyleDanbot = "danbot"
+	StyleClean  = "clean"
+)
 
 const (
 	// ManifestVersion is the schema version of latest.json.
@@ -110,6 +113,8 @@ type Submission struct {
 	ImageKey string
 	Prompt   string
 	Kind     Kind
+	// Clean is true for an image drawn without the danbot style (🫧).
+	Clean bool
 	// ParentKey is the image key of the source of an edit, if it is one of
 	// our own images in the same guild. Empty otherwise.
 	ParentKey string
@@ -306,6 +311,9 @@ func (g *Gallery) entryFor(s Submission) (Entry, error) {
 		Kind:    kind,
 		Style:   StyleDanbot,
 		Context: cleanContext(s.Context),
+	}
+	if s.Clean {
+		e.Style = StyleClean
 	}
 	// Only an edit has a parent, and only an image of ours in the same group.
 	if kind == KindEdit {

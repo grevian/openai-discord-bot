@@ -491,6 +491,19 @@ func TestMissingImageKeyIsRejected(t *testing.T) {
 	}
 }
 
+func TestCleanSubmissionGetsCleanStyle(t *testing.T) {
+	store := newMemStore()
+	g := newTestGallery(defaultCfg, store)
+	s := sub("g1", 1)
+	s.Clean = true
+	if err := g.Publish(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.manifest(t).Items[0].Style; got != StyleClean {
+		t.Errorf("style = %q, want %q", got, StyleClean)
+	}
+}
+
 func TestCleanPrompt(t *testing.T) {
 	long := strings.Repeat("a", 400)
 	tests := []struct{ name, in, want string }{

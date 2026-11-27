@@ -583,7 +583,7 @@ func (b *AIBot) handleImageMessage(ctx context.Context, responseChannel string, 
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("a picture I drawed", clean), prompt, gallery.KindGenerate, editOrigin{}, m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("a picture I drawed", clean), prompt, gallery.KindGenerate, clean, editOrigin{}, m); err != nil {
 		return err
 	}
 
@@ -609,7 +609,7 @@ func firstImageB64(resp *openai.ImagesResponse) (string, error) {
 // their own reader over those bytes, so an S3 failure cannot truncate what
 // Discord receives, and a Discord failure cannot block the S3 upload. Both
 // finish before this returns.
-func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, responseChannel, b64, content, prompt string, kind gallery.Kind, origin editOrigin, m *discordgo.MessageCreate) error {
+func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, responseChannel, b64, content, prompt string, kind gallery.Kind, clean bool, origin editOrigin, m *discordgo.MessageCreate) error {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
 	image, err := base64.StdEncoding.DecodeString(b64)
@@ -627,7 +627,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 		defer wg.Done()
 		// This goroutine is outside the handler's recover, so it needs its own.
 		defer recoverHandler("archiveImage")
-		b.archiveImage(ctx, span, responseChannel, m.GuildID, id, image, prompt, kind, origin)
+		b.archiveImage(ctx, span, responseChannel, m.GuildID, id, image, prompt, kind, clean, origin)
 	}()
 
 	opt, cancel := b.discordCtx(ctx)
@@ -654,7 +654,7 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 // URL in the thread context. Failures are recorded and logged, not returned:
 // the user already has the image in Discord. Once the image is stored it is
 // also offered to the public gallery.
-func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID, id string, image []byte, prompt string, kind gallery.Kind, origin editOrigin) {
+func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChannel, guildID, id string, image []byte, prompt string, kind gallery.Kind, clean bool, origin editOrigin) {
 	logger := slog.Default().WithGroup("dispatchGeneratedImage")
 
 	storeCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
@@ -671,6 +671,7 @@ func (b *AIBot) archiveImage(ctx context.Context, span trace.Span, responseChann
 		ImageKey:  imageKey,
 		Prompt:    b.galleryPrompt(prompt),
 		Kind:      kind,
+		Clean:     clean,
 		ParentKey: origin.parentKey,
 		Context:   origin.directives,
 	})
@@ -838,7 +839,7 @@ func (b *AIBot) handleImageEditMessage(ctx context.Context, responseChannel, pro
 		return err
 	}
 
-	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("here ya go", clean), prompt, gallery.KindEdit, editOrigin{parentKey: source.parentKey, directives: directives}, m); err != nil {
+	if err := b.dispatchGeneratedImage(ctx, span, responseChannel, b64, cleanReply("here ya go", clean), prompt, gallery.KindEdit, clean, editOrigin{parentKey: source.parentKey, directives: directives}, m); err != nil {
 		return err
 	}
 
