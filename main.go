@@ -5,11 +5,16 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"openai-discord-bot/bot"
 	"openai-discord-bot/config"
+	"openai-discord-bot/health"
+	"openai-discord-bot/telemetry"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 func main() {
@@ -25,6 +30,39 @@ func main() {
 		os.Exit(1)
 	}
 	logger := config.GetLogger()
+
+	// The health endpoint starts early so it answers "starting" (503) while
+	// Discord connects. The signals are filled in as the pieces come up.
+	var (
+		ready     atomic.Bool
+		session   atomic.Pointer[discordgo.Session]
+		botHandle atomic.Pointer[bot.AIBot]
+	)
+	if cfg.HealthAddr != "" {
+		err := health.Serve(serviceCtx, cfg.HealthAddr, health.Handler(health.Sources{
+			Version: telemetry.Version,
+			Start:   time.Now(),
+			Ready:   ready.Load,
+			DiscordConnected: func() bool {
+				s := session.Load()
+				// Open holds the session lock while it connects, so a plain
+				// RLock would hang the handler: TryRLock failing means
+				// "not connected (yet)".
+				if s == nil || !s.TryRLock() {
+					return false
+				}
+				defer s.RUnlock()
+				return s.DataReady
+			},
+			Degraded: func() bool { b := botHandle.Load(); return b != nil && b.Degraded() },
+			Draining: func() bool { b := botHandle.Load(); return b != nil && b.Draining() },
+		}))
+		if err != nil {
+			logger.Error("health endpoint unavailable, continuing without it", slog.String("addr", cfg.HealthAddr), slog.String("error", err.Error()))
+		} else {
+			logger.Info("health endpoint listening", slog.String("addr", cfg.HealthAddr))
+		}
+	}
 
 	fatal := func(msg string, err error) {
 		logger.Error(msg, slog.String("error", err.Error()))
@@ -42,6 +80,7 @@ func main() {
 	if err != nil {
 		fatal("Failed to instantiate Discord client", err)
 	}
+	session.Store(discordSession)
 	if err = discordSession.Open(); err != nil {
 		fatal("Failed to connect to Discord", err)
 	}
@@ -83,6 +122,8 @@ func main() {
 		}()
 	}
 
+	botHandle.Store(botInstance)
+	ready.Store(true)
 	logger.Info("Starting bot")
 
 	stop := make(chan os.Signal, 1)
