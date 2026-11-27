@@ -479,3 +479,58 @@ func TestSessionDiscordReadsState(t *testing.T) {
 		t.Error("expected an error for an unknown channel")
 	}
 }
+
+// assertNoMassPings fails unless every sent message restricts mentions to
+// users, so role and @everyone pings are never parsed.
+func assertNoMassPings(t *testing.T, tb *testBot, wantSends int) {
+	t.Helper()
+	sent := tb.discord.sentMessages()
+	if len(sent) != wantSends {
+		t.Fatalf("sent %d messages, want %d: %+v", len(sent), wantSends, sent)
+	}
+	for _, s := range sent {
+		am := s.AllowedMentions
+		if am == nil || len(am.Parse) != 1 || am.Parse[0] != discordgo.AllowedMentionTypeUsers || len(am.Roles) != 0 {
+			t.Errorf("message %q may ping roles or everyone: AllowedMentions = %+v", s.Content, am)
+		}
+	}
+}
+
+func TestChatReplyRestrictsMentions(t *testing.T) {
+	tb := newTestBot(t)
+	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+		return textResponse("<@&123> @everyone hi"), nil
+	}
+	tb.bot.handleMessage(context.Background(), mention("hello"))
+	assertNoMassPings(t, tb, 1)
+}
+
+func TestImageReplyRestrictsMentions(t *testing.T) {
+	tb := newTestBot(t)
+	b64 := base64.StdEncoding.EncodeToString(pngBytes)
+	tb.images.generate = func(context.Context, openai.ImageGenerateParams) (*openai.ImagesResponse, error) {
+		return imageResponse(b64), nil
+	}
+	tb.bot.handleMessage(context.Background(), mention("draw me a picture of a cat"))
+	sent := tb.discord.sentMessages()
+	if len(sent) == 0 {
+		t.Fatal("no image sent")
+	}
+	assertNoMassPings(t, tb, len(sent))
+	if !sent[len(sent)-1].AllowedMentions.RepliedUser {
+		t.Error("image reply should still ping the author")
+	}
+}
+
+func TestErrorNoticeRestrictsMentions(t *testing.T) {
+	tb := newTestBot(t)
+	tb.responses.fn = func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+		return nil, &openai.Error{StatusCode: http.StatusBadRequest}
+	}
+	tb.bot.handleMessage(context.Background(), mention("hello"))
+	sent := tb.discord.sentMessages()
+	if len(sent) == 0 {
+		t.Fatal("no error notice sent")
+	}
+	assertNoMassPings(t, tb, len(sent))
+}

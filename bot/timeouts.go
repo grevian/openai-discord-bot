@@ -70,11 +70,25 @@ func (b *AIBot) discordCtx(ctx context.Context) (discordgo.RequestOption, contex
 	return discordgo.WithContext(callCtx), cancel
 }
 
+// defaultAllowedMentions is applied to every message the bot sends, so model
+// output or user text such as "<@&role>" or "@everyone" cannot ping roles or
+// the whole channel. Individual users may still be mentioned; a message that
+// replies to another still pings its author.
+func defaultAllowedMentions() *discordgo.MessageAllowedMentions {
+	return &discordgo.MessageAllowedMentions{
+		Parse:       []discordgo.AllowedMentionType{discordgo.AllowedMentionTypeUsers},
+		RepliedUser: true,
+	}
+}
+
 // sendMessage posts a plain text message to a Discord channel.
 func (b *AIBot) sendMessage(ctx context.Context, channel, content string) error {
 	opt, cancel := b.discordCtx(ctx)
 	defer cancel()
-	_, err := b.discord.ChannelMessageSend(channel, content, opt)
+	_, err := b.discord.ChannelMessageSendComplex(channel, &discordgo.MessageSend{
+		Content:         content,
+		AllowedMentions: defaultAllowedMentions(),
+	}, opt)
 	return err
 }
 
