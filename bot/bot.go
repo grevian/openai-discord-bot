@@ -632,8 +632,9 @@ func (b *AIBot) dispatchGeneratedImage(ctx context.Context, span trace.Span, res
 
 	opt, cancel := b.discordCtx(ctx)
 	_, err = b.discord.ChannelMessageSendComplex(responseChannel, &discordgo.MessageSend{
-		Content:   content,
-		Reference: m.Reference(),
+		Content:         content,
+		Reference:       m.Reference(),
+		AllowedMentions: defaultAllowedMentions(),
 		File: &discordgo.File{
 			Name:        uploadName(id),
 			ContentType: "image/png",
