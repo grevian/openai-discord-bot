@@ -409,6 +409,22 @@ type editSource struct {
 	reply *discordgo.Message
 }
 
+// referencedMessage returns the message m replies to, or nil.
+func (b *AIBot) referencedMessage(ctx context.Context, m *discordgo.MessageCreate) *discordgo.Message {
+	ref := m.ReferencedMessage
+	if ref == nil && m.MessageReference != nil && m.MessageReference.MessageID != "" {
+		// The gateway doesn't always inline ReferencedMessage — older messages
+		// or cache misses fall back to an explicit fetch.
+		opt, cancel := b.discordCtx(ctx)
+		fetched, err := b.discord.ChannelMessage(m.MessageReference.ChannelID, m.MessageReference.MessageID, opt)
+		cancel()
+		if err == nil {
+			ref = fetched
+		}
+	}
+	return ref
+}
+
 // findEditSource finds the image an edit starts from. It prefers an image
 // attached to the triggering message, then falls back to one attached to the
 // message it replies to, if the bot wrote that message. Only that bot reply
@@ -421,17 +437,7 @@ func (b *AIBot) findEditSource(ctx context.Context, m *discordgo.MessageCreate) 
 		}
 	}
 
-	ref := m.ReferencedMessage
-	if ref == nil && m.MessageReference != nil && m.MessageReference.MessageID != "" {
-		// The gateway doesn't always inline ReferencedMessage — older messages
-		// or cache misses fall back to an explicit fetch.
-		opt, cancel := b.discordCtx(ctx)
-		fetched, err := b.discord.ChannelMessage(m.MessageReference.ChannelID, m.MessageReference.MessageID, opt)
-		cancel()
-		if err == nil {
-			ref = fetched
-		}
-	}
+	ref := b.referencedMessage(ctx, m)
 	if ref == nil || ref.Author == nil || ref.Author.ID != b.discord.BotUser().ID {
 		return editSource{}
 	}

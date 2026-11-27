@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
+	"openai-discord-bot/bot/feedback"
 	"openai-discord-bot/bot/flags"
 	"openai-discord-bot/bot/storage"
 
@@ -76,6 +77,9 @@ type AIBot struct {
 	flags flagStore
 	// ownerUserID may change flags by DM. Empty disables the command.
 	ownerUserID string
+	// feedback stores feedback and ideas. Nil means it is not configured.
+	feedback        feedbackStore
+	feedbackLimiter *feedback.Limiter
 	// galleryWG tracks in-flight gallery publishes.
 	galleryWG sync.WaitGroup
 
@@ -124,6 +128,8 @@ type Options struct {
 	ImageStorage *storage.ImageStorage
 	Settings     Settings
 	Flags        *flags.Flags
+	// Feedback may be nil (feedback is then not switched on).
+	Feedback *feedback.Store
 	// PromptPath is the persona file (prompts/danbo.json).
 	PromptPath string
 }
@@ -154,6 +160,11 @@ func NewAIBot(botCtx context.Context, opts Options) (*AIBot, error) {
 		imageBaseURL:        settings.ImageBaseURL,
 		flags:               flagCache,
 		ownerUserID:         settings.OwnerUserID,
+	}
+	bot.feedbackLimiter = feedback.NewLimiter(feedbackLimitCount, feedbackLimitWindow)
+	// Only a non-nil store: a nil *Store in the interface would not be nil.
+	if opts.Feedback != nil {
+		bot.feedback = opts.Feedback
 	}
 	if flagCache == nil {
 		bot.flags = NewFlags(nil)
@@ -266,7 +277,8 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 	clean := hasCleanEmoji(m.Content) || (intent == intentEdit && source.clean)
 	span.SetAttributes(attribute.String("intent", intent.String()), attribute.Bool("clean", clean))
 
-	if b.isDegraded(ctx) && intent != intentHelp && intent != intentEditNoImage {
+	if b.isDegraded(ctx) && intent != intentHelp && intent != intentEditNoImage &&
+		intent != intentFeedback && intent != intentIdea {
 		span.SetAttributes(attribute.Bool("degraded", true))
 		stopTyping()
 		err = b.sendMessage(ctx, responseChannel, msgDegraded)
@@ -281,6 +293,8 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 		err = b.sendMessage(ctx, responseChannel, helpText(b.imageBaseURL))
 	case intentEditNoImage:
 		err = b.sendMessage(ctx, responseChannel, msgEditNeedsImage)
+	case intentFeedback, intentIdea:
+		err = b.handleFeedback(ctx, responseChannel, intent, prompt, m)
 	case intentEdit:
 		err = b.handleImageEditMessage(ctx, responseChannel, prompt, source, clean, threadPromptContext, m)
 	case intentDraw:

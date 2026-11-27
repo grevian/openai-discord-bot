@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
 	"openai-discord-bot/bot"
+	"openai-discord-bot/bot/feedback"
 	"openai-discord-bot/bot/flags"
 	"openai-discord-bot/bot/storage"
 	"openai-discord-bot/config/awstrace"
@@ -46,6 +47,7 @@ type Config struct {
 	ImagesBucket      string // BOT_OPENAIDISCORDBOTIMAGES_NAME, optional
 	ConversationTable string // AI_DISCORD_BOT_CONVERSATIONS_NAME, or BOT_CONVERSATION_TABLE
 	FlagsTable        string // BOT_FLAGS_TABLE, optional
+	FeedbackTable     string // BOT_FEEDBACK_TABLE, optional
 
 	AWSRegion  string // AWS_REGION, default ca-central-1
 	PromptPath string // BOT_PROMPT_PATH, default prompts/danbo.json
@@ -96,6 +98,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		ImagesBucket:      bot("OPENAIDISCORDBOTIMAGES_NAME"),
 		ConversationTable: table,
 		FlagsTable:        strings.TrimSpace(bot("FLAGS_TABLE")),
+		FeedbackTable:     strings.TrimSpace(bot("FEEDBACK_TABLE")),
 		AWSRegion:         orDefault(get("AWS_REGION"), defaultAWSRegion),
 		PromptPath:        orDefault(bot("PROMPT_PATH"), defaultPromptPath),
 		Bot:               settings,
@@ -120,6 +123,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("images_bucket", c.ImagesBucket),
 		slog.String("conversation_table", c.ConversationTable),
 		slog.String("flags_table", c.FlagsTable),
+		slog.String("feedback_table", c.FeedbackTable),
 		slog.String("aws_region", c.AWSRegion),
 		slog.String("prompt_path", c.PromptPath),
 		slog.String("operator_channel_id", c.Bot.OperatorChannelID),
@@ -174,6 +178,16 @@ func GetFlagsBackend(awscfg aws.Config, cfg Config) flags.Backend {
 		return nil
 	}
 	return flags.NewDynamoBackend(awscfg, cfg.FlagsTable)
+}
+
+// GetFeedbackStore returns the feedback store, or nil when
+// BOT_FEEDBACK_TABLE is not set (the bot then says feedback is not switched on).
+func GetFeedbackStore(awscfg aws.Config, cfg Config) *feedback.Store {
+	if cfg.FeedbackTable == "" {
+		slog.Warn("BOT_FEEDBACK_TABLE is not set, feedback is disabled")
+		return nil
+	}
+	return feedback.NewStore(awscfg, cfg.FeedbackTable)
 }
 
 func GetImageStorage(awscfg aws.Config, cfg Config) *storage.ImageStorage {

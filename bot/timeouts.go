@@ -95,6 +95,17 @@ func (b *AIBot) sendMessage(ctx context.Context, channel, content string) error 
 	return err
 }
 
+// sendMessageNoMentions posts text that quotes users, so it may not ping anyone.
+func (b *AIBot) sendMessageNoMentions(ctx context.Context, channel, content string) error {
+	opt, cancel := b.discordCtx(ctx)
+	defer cancel()
+	_, err := b.discord.ChannelMessageSendComplex(channel, &discordgo.MessageSend{
+		Content:         content,
+		AllowedMentions: &discordgo.MessageAllowedMentions{},
+	}, opt)
+	return err
+}
+
 func (b *AIBot) addThreadMessage(ctx context.Context, thread, source, message string) error {
 	callCtx, cancel := withTimeout(ctx, b.timeouts.Storage)
 	defer cancel()

@@ -13,6 +13,7 @@ Every request starts with an `@Danbot` mention. Say `@Danbot help` on its own fo
 | `@Danbot 🎨 <idea>` or `@Danbot draw me a picture of <idea>` | An AI-generated crayon stick-figure drawing, 1024x1024 |
 | `@Danbot ✏️ <change>`, `edit: <change>` or `redraw <change>`, with an image attached (or as a reply to one of the bot's own drawings) | An edited version of that image, 1024x1024 |
 | `@Danbot <https link>` on its own, `@Danbot 📰 <link>` or `@Danbot summarize <link>` | A one-paragraph reaction to the page in Danbot's voice, more mood than detail (needs `BOT_KAGI_API_KEY`) |
+| `@Danbot feedback <text>` or `@Danbot idea <text>` | The text is stored for the owner, with a short in-character reply and no model call |
 | `@Danbot help` (the whole message) | A static help reply, no model call |
 
 Notes:
@@ -22,6 +23,7 @@ Notes:
 - The image to edit must be png, jpeg or webp and under 50MB. Without an image, an edit request gets a short reply saying one is needed.
 - Generated images are archived and, when the gallery is enabled, shown in the [gallery](https://sillybullshit.click/gallery/) (newest 48).
 - Link summaries take `https` links only. The page is read by the Kagi Extract API, and only its first 4,000 characters are sent to the model. A link inside an ordinary chat message (`@Danbot is <link> any good?`) is just chat. Draw and edit beat summarise.
+- Feedback and idea triggers only match at the start of the message ("my feedback on this poem" is chat), and beat every other trigger. At most 1,500 characters, 5 items per user per 10 minutes. The item is stored with your Discord name and ID, and the owner (and the owner's AI agents) read it. Replying to one of the bot's messages also records that message.
 - Slash commands are not supported yet.
 
 ![conversational interactions](https://user-images.githubusercontent.com/603334/230736019-528a4a65-f787-4a16-918f-43c2f0203ddd.png)
@@ -58,7 +60,7 @@ The bot refuses to start if either value is invalid.
 
 `AWS_REGION` (default `ca-central-1`) sets the AWS region and `BOT_PROMPT_PATH` (default `prompts/danbo.json`) the persona file.
 
-`BOT_OWNER_USER_ID` (optional) is the Discord user ID (17–20 digits) of the bot owner, the only user who may change feature flags. Unset or invalid (logged) turns the flag command off; the bot still starts. `BOT_FLAGS_TABLE` (optional) is the DynamoDB table that stores the flags. Unset means every flag stays at its default and can't be changed. In production both come from `danbot-prepare.sh` (see Deployment).
+`BOT_OWNER_USER_ID` (optional) is the Discord user ID (17–20 digits) of the bot owner, the only user who may change feature flags. Unset or invalid (logged) turns the flag command off; the bot still starts. `BOT_FLAGS_TABLE` (optional) is the DynamoDB table that stores the flags. Unset means every flag stays at its default and can't be changed. `BOT_FEEDBACK_TABLE` (optional) is the DynamoDB table for feedback; unset makes the feedback trigger reply that it is not switched on. In production these come from `danbot-prepare.sh` (see Deployment).
 
 ### Feature flags (owner only)
 
@@ -82,6 +84,18 @@ Feature flags switch bot behaviour on and off without a deploy. The owner sends 
 Flags are defined in `bot/flags.go`. To add one, register it there with a default that keeps today's behaviour.
 
 `BOT_KAGI_API_KEY` (optional, a secret) is the [Kagi Extract API](https://kagi.com/api/docs) key used for link summaries. Unset means the summarise triggers reply that the feature isn't configured. In production, deploy.yml copies the `KAGI_API_KEY` GitHub secret into the SSM parameter `/openai-discord-bot/prod/kagi_api_key`, which the instance reads when the bot starts.
+
+### Feedback (operator)
+
+Feedback and ideas (see the usage table) go to the DynamoDB table `openai-discord-bot-prod-feedback` (`BOT_FEEDBACK_TABLE`, set by user-data). Each item is also posted to the operator channel. Layout: `pk` is always `feedback`; `sk` is `<unix ms, 13 digits>#<discord message id>` and is the item ID. Attributes: `kind` (`feedback` or `idea`), `text`, `truncated`, `status`, `created_at`, `user_id`, `username`, `guild_id`, `channel_id`, `message_id`, `message_url`, `bot_version`, and `reply_to_message_id` / `reply_to_content` when it replies to a bot message. Status values: `new`, `triaged`, `filed`, `done`, `wontfix`, `duplicate`; agents also set `status_note`, `status_by`, `status_at`. Deleting an item on request is a manual `DeleteItem`.
+
+Agents read it with `python3 -I scripts/feedback.py` (see AGENTS.md). Terraform creates the IAM user `openai-discord-bot-prod-agent` (`terraform/agent_access.tf`) but deliberately no access key, which would be stored in the state. Create it once and give it to the agents:
+
+```
+aws iam create-access-key --user-name openai-discord-bot-prod-agent
+```
+
+Add `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as Trellis secrets for the danbot agents. To rotate: create a second key, swap the secrets, then `aws iam delete-access-key` the old one (every 90 days or on suspicion). To check the policy with the agent key, these must all fail with `AccessDeniedException`: a raw `UpdateItem` that sets `text`, an `UpdateItem` with `ReturnValues=ALL_NEW`, a `Scan` of the feedback table, and a `Query` on the flags table.
 
 ## Deployment
 

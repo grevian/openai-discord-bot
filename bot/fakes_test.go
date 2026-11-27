@@ -13,6 +13,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"openai-discord-bot/bot/feedback"
 	"openai-discord-bot/bot/storage"
 
 	"github.com/bwmarrin/discordgo"
@@ -450,7 +451,6 @@ type testBot struct {
 	images    *fakeImages
 	responses *fakeResponses
 	calls     *callLog
-	mu        sync.Mutex
 }
 
 func newTestBot(t *testing.T) *testBot {
@@ -485,6 +485,7 @@ func newTestBot(t *testing.T) *testBot {
 		operatorChannelID: testOperatorChannel,
 		imageBaseURL:      testImageBaseURL,
 		flags:             NewFlags(nil),
+		feedbackLimiter:   feedback.NewLimiter(feedbackLimitCount, feedbackLimitWindow),
 	}
 	return tb
 }
@@ -499,4 +500,27 @@ func mention(content string) *discordgo.MessageCreate {
 		Author:    &discordgo.User{ID: userID, Username: "alice"},
 		Mentions:  []*discordgo.User{{ID: botID}},
 	}}
+}
+
+// fakeFeedbackStore records the items it is given.
+type fakeFeedbackStore struct {
+	mu    sync.Mutex
+	err   error
+	items []feedback.Item
+}
+
+func (f *fakeFeedbackStore) Put(_ context.Context, it feedback.Item) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.items = append(f.items, it)
+	return nil
+}
+
+func (f *fakeFeedbackStore) stored() []feedback.Item {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]feedback.Item(nil), f.items...)
 }

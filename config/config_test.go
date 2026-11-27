@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"log/slog"
 	"strings"
 	"testing"
@@ -39,6 +40,7 @@ func TestLoadFromEnv(t *testing.T) {
 		"BOT_OPENAI_AUTH_TOKEN":             "sk",
 		"BOT_OPENAIDISCORDBOTIMAGES_NAME":   "bucket",
 		"BOT_FLAGS_TABLE":                   " flags ",
+		"BOT_FEEDBACK_TABLE":                " fb ",
 		"AWS_REGION":                        "eu-west-1",
 		"BOT_PROMPT_PATH":                   "/etc/p.json",
 		"BOT_CONVERSATION_TABLE":            "old",
@@ -50,7 +52,7 @@ func TestLoadFromEnv(t *testing.T) {
 	if c.JSONLogs || c.Tracing || c.Metrics || !c.DebugLogs {
 		t.Errorf("bools wrong: %+v", c)
 	}
-	if c.DiscordToken != "tok" || c.OpenAIToken != "sk" || c.ImagesBucket != "bucket" || c.FlagsTable != "flags" {
+	if c.DiscordToken != "tok" || c.OpenAIToken != "sk" || c.ImagesBucket != "bucket" || c.FlagsTable != "flags" || c.FeedbackTable != "fb" {
 		t.Errorf("strings wrong: %+v", c)
 	}
 	if c.AWSRegion != "eu-west-1" || c.PromptPath != "/etc/p.json" {
@@ -88,5 +90,14 @@ func TestConfigLogValueRedactsSecrets(t *testing.T) {
 	}
 	if !strings.Contains(out, "<REDACTED>") {
 		t.Errorf("expected redaction markers: %s", out)
+	}
+}
+
+func TestGetFeedbackStoreNilWhenUnset(t *testing.T) {
+	if s := GetFeedbackStore(aws.Config{}, Config{}); s != nil {
+		t.Errorf("want nil store when BOT_FEEDBACK_TABLE is unset, got %v", s)
+	}
+	if s := GetFeedbackStore(aws.Config{}, Config{FeedbackTable: "t"}); s == nil {
+		t.Error("want a store when the table is set")
 	}
 }

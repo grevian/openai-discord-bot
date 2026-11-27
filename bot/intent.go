@@ -34,6 +34,9 @@ const (
 	// intentSummarize asks for a summary of a linked page; the prompt is
 	// the URL.
 	intentSummarize
+	// intentFeedback and intentIdea store the text for the owner.
+	intentFeedback
+	intentIdea
 )
 
 // editAtStart matches a message that opens with an edit trigger.
@@ -58,9 +61,15 @@ func classifyMessage(content, botID string, hasSourceImage bool) (messageIntent,
 	// ordinary chat ("credit: ...", "can you redraw my thinking") still chats.
 	wantsEditNoImage := !hasSourceImage && editAtStart.MatchString(strings.TrimSpace(lowerPrompt))
 
+	fbKind, fbText, wantsFeedback := feedbackTarget(content, botID)
+
 	switch {
 	case isHelpRequest(sanitizedUserPrompt):
 		return intentHelp, sanitizedUserPrompt
+	case wantsFeedback && fbKind == "idea":
+		return intentIdea, fbText
+	case wantsFeedback:
+		return intentFeedback, fbText
 	case wantsEditNoImage && !wantsDraw:
 		return intentEditNoImage, sanitizedUserPrompt
 	case wantsEdit:
@@ -88,9 +97,29 @@ func (i messageIntent) String() string {
 		return "help"
 	case intentSummarize:
 		return "summarize"
+	case intentFeedback:
+		return "feedback"
+	case intentIdea:
+		return "idea"
 	default:
 		return "chat"
 	}
+}
+
+// feedbackAtStart matches the feedback and idea triggers at the start of a
+// message: the word alone, or followed by a colon, dash or whitespace.
+var feedbackAtStart = regexp.MustCompile(`(?is)^(feedback|idea)(?:\s*[:\-–—]\s*|\s+|$)(.*)$`)
+
+// feedbackTarget reports whether the message opens with a feedback or idea
+// trigger, and returns the kind and the text after it. Only the start of the
+// message counts, so "my feedback on this poem" still chats.
+func feedbackTarget(content, botID string) (kind, text string, ok bool) {
+	content = strings.NewReplacer("<@"+botID+">", " ", "<@!"+botID+">", " ").Replace(content)
+	m := feedbackAtStart.FindStringSubmatch(strings.TrimSpace(content))
+	if m == nil {
+		return "", "", false
+	}
+	return strings.ToLower(m[1]), strings.TrimSpace(m[2]), true
 }
 
 // stripDrawTriggers removes the draw triggers from a prompt, keeping the

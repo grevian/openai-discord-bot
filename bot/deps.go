@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"openai-discord-bot/bot/feedback"
 	"openai-discord-bot/bot/flags"
 	"openai-discord-bot/bot/storage"
 	"openai-discord-bot/gallery"
@@ -54,6 +55,11 @@ type flagStore interface {
 	Enabled(ctx context.Context, flag flags.BoolFlag) bool
 	Set(ctx context.Context, name, value, by string) (flags.Change, error)
 	List() []flags.Status
+}
+
+// feedbackStore saves user feedback. *feedback.Store satisfies it.
+type feedbackStore interface {
+	Put(ctx context.Context, it feedback.Item) error
 }
 
 // imageAPI is the subset of the OpenAI image service the bot uses.
@@ -108,4 +114,5 @@ var (
 	_ discordAPI       = sessionDiscord{}
 	_ linkExtractor    = (*kagiClient)(nil)
 	_ flagStore        = (*flags.Flags)(nil)
+	_ feedbackStore    = (*feedback.Store)(nil)
 )
