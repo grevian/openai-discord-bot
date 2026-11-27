@@ -299,7 +299,7 @@ func TestNonURLChatIsUnaffected(t *testing.T) {
 	if len(links.urls) != 0 {
 		t.Errorf("chat called the extractor: %v", links.urls)
 	}
-	if req := tb.responses.calls[0]; req.Instructions.Value != testSysInst {
+	if req := tb.responses.calls[0]; req.Instructions.Value != testSysInst+"\n\n"+lengthHint {
 		t.Errorf("chat instructions changed: %q", req.Instructions.Value)
 	}
 	if n := len(tb.responses.calls[0].Input.OfInputItemList); n != 3 {
