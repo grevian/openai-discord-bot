@@ -1,0 +1,70 @@
+name: Bot health check
+description: >
+  Runs check.sh on the bot instance over SSM Run Command and reports whether
+  the expected release is up and healthy (GET /healthz on loopback, stable
+  systemd unit, release link). AWS credentials must already be configured.
+  Used by deploy.yml (restart, then gate and roll back) and instance-refresh.yml
+  (check only). The bot's own logs are never printed.
+inputs:
+  expect-version:
+    description: Git sha (40 hex characters) the instance must be running
+    required: true
+  restart:
+    description: "true: restart the bot service before checking"
+    required: false
+    default: "false"
+  ready-timeout:
+    description: Seconds to wait for /healthz to answer 200 with the expected version
+    required: false
+    default: "120"
+  stable-seconds:
+    description: Seconds the service must keep the same process after it is ready
+    required: false
+    default: "30"
+  allow-no-endpoint:
+    description: >
+      "true": a release from before /healthz existed may pass on its systemd
+      state and release link alone (for rolling back to an old sha)
+    required: false
+    default: "false"
+  health-addr:
+    description: host:port of /healthz on the instance
+    required: false
+    default: 127.0.0.1:8086
+  instance-wait:
+    description: >
+      Seconds to keep looking for the instance and retrying SSM while a new
+      instance registers (instance refresh); 0 fails at once
+    required: false
+    default: "0"
+  fail-on-unhealthy:
+    description: >
+      "false": the step succeeds even when the result is fail or error, and the
+      caller reads the result output instead
+    required: false
+    default: "true"
+outputs:
+  result:
+    description: >
+      ok; fail (the instance answered and the release is not healthy); or error
+      (the check could not run or gave no verdict, so the release state is unknown)
+    value: ${{ steps.check.outputs.result }}
+  reason:
+    description: One line, printable ASCII, empty when the result is ok
+    value: ${{ steps.check.outputs.reason }}
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        IN_EXPECT: ${{ inputs.expect-version }}
+        IN_RESTART: ${{ inputs.restart }}
+        IN_READY_TIMEOUT: ${{ inputs.ready-timeout }}
+        IN_STABLE: ${{ inputs.stable-seconds }}
+        IN_ALLOW_NO_ENDPOINT: ${{ inputs.allow-no-endpoint }}
+        IN_ADDR: ${{ inputs.health-addr }}
+        IN_INSTANCE_WAIT: ${{ inputs.instance-wait }}
+        IN_FAIL_ON_UNHEALTHY: ${{ inputs.fail-on-unhealthy }}
+        CHECK_SCRIPT: ${{ github.action_path }}/check.sh
+      run: bash "${{ github.action_path }}/run.sh"

@@ -125,6 +125,29 @@ jobs:
             echo "- sha256: \`$SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The release the instance runs now, the target if this one is unhealthy.
+      # Only a sha whose artifact is in the bucket counts: rolling back needs no
+      # rebuild, but older shas (before the native binary) have an image only.
+      # Empty on a re-run of the same commit or a first deploy: no rollback.
+      - name: Remember the previous release
+        id: prev
+        run: |
+          PREV=$(aws ssm get-parameter --name "$SSM_IMAGE_TAG_PARAM" \
+            --query Parameter.Value --output text 2>/dev/null || true)
+          if [[ ! "$PREV" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::warning::image_tag holds no release sha ('${PREV:0:60}'); no rollback target"
+            PREV=
+          elif [ "$PREV" = "${{ github.sha }}" ]; then
+            echo "::notice::image_tag already holds this commit; no rollback target"
+            PREV=
+          elif ! aws s3api head-object --bucket "$ARTIFACTS_BUCKET" \
+            --key "artifacts/$RELEASE_NAME/$PREV/$RELEASE_FILE.sha256" > /dev/null 2>&1; then
+            echo "::warning::no artifact for the previous release $PREV; no rollback target"
+            PREV=
+          fi
+          echo "sha=$PREV" >> "$GITHUB_OUTPUT"
+          echo "Previous release (rollback target): ${PREV:-none}"
+
       - name: Update image tag in SSM
         run: |
           aws ssm put-parameter \
@@ -165,33 +188,89 @@ jobs:
             --type SecureString --overwrite > /dev/null
           echo "Kagi API key updated"
 
-      - name: Restart bot via SSM Run Command
+      # Restarts the bot, then waits for GET /healthz on the instance to answer
+      # 200 with this release's sha and for the service to stay up. The step
+      # never fails on its own (fail-on-unhealthy false, continue-on-error): the
+      # steps below read its result, so a bad release rolls back exactly once.
+      # result: ok | fail (instance answered, release unhealthy) | error (the
+      # check could not run: the release state is unknown, so no rollback).
+      - name: Restart bot and check its health
+        id: health
+        continue-on-error: true
+        uses: ./.github/actions/bot-health
+        with:
+          expect-version: ${{ github.sha }}
+          restart: "true"
+          fail-on-unhealthy: "false"
+
+      - name: Roll back the release tag
+        id: rollback_tag
+        if: steps.health.outputs.result == 'fail' && steps.prev.outputs.sha != ''
+        env:
+          PREV: ${{ steps.prev.outputs.sha }}
         run: |
-          CMD_ID=$(aws ssm send-command \
-            --document-name "AWS-RunShellScript" \
-            --targets "Key=tag:App,Values=openai-discord-bot" \
-            --comment "Deploy ${{ github.sha }}" \
-            --parameters 'commands=["set -e","systemctl restart bot","sleep 10","systemctl is-active bot","journalctl -u bot -o cat --since -2min | grep danbot-prepare | tail -n 1"]' \
-            --query "Command.CommandId" \
-            --output text)
-          echo "Command: $CMD_ID"
+          echo "::warning::${{ github.sha }} is unhealthy; rolling back to $PREV"
+          aws ssm put-parameter --name "$SSM_IMAGE_TAG_PARAM" --value "$PREV" --type String --overwrite
 
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:App,Values=openai-discord-bot" "Name=instance-state-name,Values=running" \
-            --query "Reservations[].Instances[].InstanceId" \
-            --output text)
-          echo "Instance: $INSTANCE_ID"
+      # A release from before /healthz existed has no endpoint: allow-no-endpoint
+      # checks its systemd state and release link instead.
+      - name: Restart bot on the previous release and check it
+        id: rollback_health
+        if: steps.rollback_tag.outcome == 'success'
+        continue-on-error: true
+        uses: ./.github/actions/bot-health
+        with:
+          expect-version: ${{ steps.prev.outputs.sha }}
+          restart: "true"
+          allow-no-endpoint: "true"
+          fail-on-unhealthy: "false"
 
-          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE_ID"
+      - name: Honeycomb marker (rollback)
+        if: steps.rollback_tag.outcome == 'success'
+        uses: ./.github/actions/honeycomb-marker
+        with:
+          token: ${{ secrets.HONEYCOMB_MARKER_TOKEN }}
+          type: rollback
+          start-time: ${{ steps.started.outputs.at }}
+          message: rollback ${{ github.sha }} -> ${{ steps.prev.outputs.sha }}
 
-          aws ssm get-command-invocation \
-            --command-id "$CMD_ID" \
-            --instance-id "$INSTANCE_ID" \
-            --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
-            --output json
+      # The job ends red when the new release is not healthy, rolled back or not.
+      # Not when an earlier step failed (health is then skipped) or on cancel.
+      - name: Fail the deploy
+        if: ${{ !cancelled() && steps.health.conclusion != 'skipped' && steps.health.outputs.result != 'ok' }}
+        env:
+          NEW_SHA: ${{ github.sha }}
+          PREV_SHA: ${{ steps.prev.outputs.sha }}
+          RESULT: ${{ steps.health.outputs.result }}
+          REASON: ${{ steps.health.outputs.reason }}
+          ROLLBACK_TAG: ${{ steps.rollback_tag.outcome }}
+          ROLLBACK_RESULT: ${{ steps.rollback_health.outputs.result }}
+          ROLLBACK_REASON: ${{ steps.rollback_health.outputs.reason }}
+        run: |
+          {
+            echo "### Deploy of \`${NEW_SHA:0:12}\` failed its health check"
+            echo
+            echo "- result: **${RESULT:-no result (the check step crashed)}**: ${REASON:-see the step log}"
+            case "$RESULT/$ROLLBACK_TAG" in
+              /*)
+                echo "- not rolled back: the check step produced no result, so the state of the instance is unknown. \`image_tag\` holds \`${NEW_SHA:0:12}\`; run the Instance Status workflow." ;;
+              error/*)
+                echo "- not rolled back: the check could not run, so the state of the instance is unknown. \`image_tag\` holds \`${NEW_SHA:0:12}\`; run the Instance Status workflow." ;;
+              fail/success)
+                echo "- rolled back once to \`${PREV_SHA:0:12}\` (\`image_tag\` now holds it); check of the old release: **${ROLLBACK_RESULT:-no result}**: ${ROLLBACK_REASON:-see the step log}" ;;
+              fail/failure)
+                echo "- the rollback to \`${PREV_SHA:0:12}\` could not write \`image_tag\`; it still holds \`${NEW_SHA:0:12}\`" ;;
+              *)
+                echo "- no rollback target (first deploy, a re-run of this commit, or no artifact for the previous release): \`image_tag\` still holds \`${NEW_SHA:0:12}\`" ;;
+            esac
+            echo
+            echo "Re-running this workflow on the same commit redeploys the same release. Push a fix, or re-run an earlier good commit."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::error::deploy of $NEW_SHA is unhealthy: ${REASON:-no reason}"
+          exit 1
 
       - name: Honeycomb marker
-        if: success()
+        if: steps.health.outputs.result == 'ok'
         uses: ./.github/actions/honeycomb-marker
         with:
           token: ${{ secrets.HONEYCOMB_MARKER_TOKEN }}
