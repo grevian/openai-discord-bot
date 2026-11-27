@@ -11,6 +11,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"openai-discord-bot/bot/storage"
 
@@ -194,6 +195,9 @@ func (f *fakeDiscord) ChannelMessageSendComplex(id string, data *discordgo.Messa
 	}
 	if ctx := discordCtx(opts); ctx != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if utf8.RuneCountInString(data.Content) > 2000 {
+		return nil, errors.New("HTTP 400 Bad Request: Must be 2000 or fewer in length")
 	}
 	msg := sentMessage{Channel: id, Content: data.Content, Reference: data.Reference, AllowedMentions: data.AllowedMentions}
 	if data.File != nil {
