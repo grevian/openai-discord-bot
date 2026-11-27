@@ -103,6 +103,7 @@ func main() {
 		ImageStorage: config.GetImageStorage(awscfg, cfg),
 		Settings:     cfg.Bot,
 		Flags:        flagCache,
+		Feedback:     config.GetFeedbackStore(awscfg, cfg),
 		PromptPath:   cfg.PromptPath,
 	})
 	if err != nil {

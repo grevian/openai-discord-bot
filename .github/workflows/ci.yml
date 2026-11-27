@@ -34,6 +34,8 @@ jobs:
       - run: go test -race -v ./...
       - name: CloudFront Function unit test
         run: node terraform/clean-urls.test.js
+      - name: Agent feedback script unit test
+        run: python3 -m unittest discover -s scripts -p '*_test.py'
 
   lint:
     name: lint

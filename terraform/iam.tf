@@ -81,6 +81,12 @@ resource "aws_iam_role_policy" "bot_dynamodb" {
         ]
         Resource = aws_dynamodb_table.flags.arn
       },
+      {
+        Sid      = "DDBFeedback"
+        Effect   = "Allow"
+        Action   = ["dynamodb:PutItem"]
+        Resource = aws_dynamodb_table.feedback.arn
+      },
     ]
   })
 }

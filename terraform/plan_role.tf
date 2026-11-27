@@ -83,6 +83,8 @@ resource "aws_iam_role_policy" "plan_extra" {
           "${aws_dynamodb_table.conversations.arn}/index/*",
           aws_dynamodb_table.flags.arn,
           "${aws_dynamodb_table.flags.arn}/index/*",
+          aws_dynamodb_table.feedback.arn,
+          "${aws_dynamodb_table.feedback.arn}/index/*",
         ]
       },
       {

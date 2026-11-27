@@ -138,3 +138,30 @@ resource "aws_dynamodb_table" "flags" {
     type = "S"
   }
 }
+
+# User feedback and feature requests (bot/feedback). One partition: pk is
+# always "feedback" and sk is "<unix ms, 13 digits>#<discord message id>", so
+# one Query lists everything in time order. This is user data, so unlike the
+# flags table it is protected from terraform destroy as well. Point-in-time
+# recovery is off; turn it on if the data becomes irreplaceable.
+resource "aws_dynamodb_table" "feedback" {
+  name                        = "${local.name_prefix}-feedback"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "pk"
+  range_key                   = "sk"
+  deletion_protection_enabled = true
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
