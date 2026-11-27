@@ -11,6 +11,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"openai-discord-bot/bot/storage"
 
@@ -114,7 +115,7 @@ type fakeDiscord struct {
 	sendErr        error
 	sendComplexErr error
 	threadErr      error
-	// onSend, when set, runs at the start of ChannelMessageSend.
+	// onSend, when set, runs at the start of every send.
 	onSend func()
 	// onSendComplex, when set, runs at the start of ChannelMessageSendComplex.
 	onSendComplex func()
@@ -167,35 +168,25 @@ func (f *fakeDiscord) ChannelMessage(_, messageID string, opts ...discordgo.Requ
 	return nil, errors.New("unknown message")
 }
 
-func (f *fakeDiscord) ChannelMessageSend(id, content string, opts ...discordgo.RequestOption) (*discordgo.Message, error) {
-	f.log.record("discord.ChannelMessageSend", discordCtx(opts))
-	f.mu.Lock()
-	onSend := f.onSend
-	f.mu.Unlock()
-	if onSend != nil {
-		onSend()
-	}
-	if ctx := discordCtx(opts); ctx != nil && ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.sendErr != nil {
-		return nil, f.sendErr
-	}
-	f.sent = append(f.sent, sentMessage{Channel: id, Content: content})
-	return &discordgo.Message{ChannelID: id, Content: content}, nil
-}
-
 // ChannelMessageSendComplex reads the attached file to EOF, as the real
 // multipart upload does. When sendComplexErr is set it fails without reading
 // anything, like a request rejected before the body is sent.
 func (f *fakeDiscord) ChannelMessageSendComplex(id string, data *discordgo.MessageSend, opts ...discordgo.RequestOption) (*discordgo.Message, error) {
 	f.log.record("discord.ChannelMessageSendComplex", discordCtx(opts))
 	f.mu.Lock()
-	err := f.sendComplexErr
+	var err error
+	if data.File != nil {
+		err = f.sendComplexErr // only file uploads fail with sendComplexErr
+	}
+	if err == nil {
+		err = f.sendErr
+	}
 	onSendComplex := f.onSendComplex
+	onSend := f.onSend
 	f.mu.Unlock()
+	if onSend != nil {
+		onSend()
+	}
 	if onSendComplex != nil {
 		onSendComplex()
 	}
@@ -204,6 +195,9 @@ func (f *fakeDiscord) ChannelMessageSendComplex(id string, data *discordgo.Messa
 	}
 	if ctx := discordCtx(opts); ctx != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if utf8.RuneCountInString(data.Content) > 2000 {
+		return nil, errors.New("HTTP 400 Bad Request: Must be 2000 or fewer in length")
 	}
 	msg := sentMessage{Channel: id, Content: data.Content, Reference: data.Reference, AllowedMentions: data.AllowedMentions}
 	if data.File != nil {
