@@ -25,6 +25,7 @@ const (
 	opEdit      aiOperation = "edit"
 	opCondense  aiOperation = "condense"
 	opSummarize aiOperation = "summarize"
+	opDispatch  aiOperation = "dispatch"
 )
 
 // modelPrice is US dollars per one million tokens.
@@ -153,6 +154,25 @@ func (b *AIBot) responsesNew(ctx context.Context, op aiOperation, req responses.
 		u = &tokenUsage{resp.Usage.InputTokens, resp.Usage.OutputTokens}
 	}
 	call.finish(nil, resp.ID, string(resp.Model), u)
+	return resp, nil
+}
+
+// decisionsNew calls the Decisions API inside an "openai dispatch" span. The
+// SDK retries once: the caller falls back to chat on any failure.
+func (b *AIBot) decisionsNew(ctx context.Context, req openai.DecisionNewParams) (*openai.Decision, error) {
+	ctx, call, opt := startAICall(ctx, opDispatch, "chat", req.Model)
+	resp, err := b.decisions.New(ctx, req, opt, option.WithMaxRetries(1))
+	if err != nil || resp == nil {
+		call.finish(err, "", "", nil)
+		return resp, err
+	}
+	var u *tokenUsage
+	if resp.Usage.TotalTokens > 0 {
+		// Decision output is free, so report none: the price table charges
+		// output tokens at the chat model's rate.
+		u = &tokenUsage{input: resp.Usage.InputTokens}
+	}
+	call.finish(nil, "", resp.Model, u)
 	return resp, nil
 }
 

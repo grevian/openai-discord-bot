@@ -32,6 +32,8 @@ func helpText(imageBaseURL string) string {
 **Edit:** attach an image (or reply to one of my drawings) and say `+"`✏️ <change>`, `edit: <change>` or `redraw <change>`"+`. png, jpeg or webp, under 50MB. The result is 1024x1024. When the owner has edit memory switched on, I keep earlier requests in mind: everything in a thread, or the last 20 messages of a reply chain (yours and mine) when you keep replying to my drawings.
 **Summarise a link:** `+"`@Danbot <https link>`"+` on its own, `+"`📰 <link>` or `summarize <link>`"+`. One paragraph of what I make of it, from the first 4,000 characters of the page. https only.
 
+**Plain words:** when the owner has guessing switched on, you can skip the emoji: `+"`@Danbot draw a fox in the snow`"+`, or reply to my drawing with `+"`make it night`"+`. I only guess when I am fairly sure, otherwise I chat. The emoji always work.
+
 **Feedback:** `+"`@Danbot feedback <text>` or `@Danbot idea <text>`"+` at the start of the message. I write it down for the owner, with your Discord name and ID, and the owner (and the owner's AI agents) read it. Up to 1,500 characters, 5 per 10 minutes.
 
 More, with the sad details: %s%s`, strings.TrimRight(imageBaseURL, "/"), helpPath)

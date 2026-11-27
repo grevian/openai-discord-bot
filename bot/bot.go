@@ -72,6 +72,8 @@ type AIBot struct {
 	// linkExamples are in-character reactions to example pages, sent before
 	// a link summary request to show the voice wanted.
 	linkExamples []linkExample
+	// decisions guesses the intent of plain-text mentions.
+	decisions decisionsAPI
 	// flags holds the feature flags. Never nil: NewAIBot falls back to
 	// defaults only.
 	flags flagStore
@@ -146,6 +148,7 @@ func NewAIBot(botCtx context.Context, opts Options) (*AIBot, error) {
 		discord:             sessionDiscord{discordSession},
 		images:              leanImages{&aiClient.Images},
 		responses:           &aiClient.Responses,
+		decisions:           &aiClient.Decisions,
 		botCtx:              botCtx,
 		systemInstructions:  prompt.Instructions,
 		drawingInstructions: prompt.DrawingInstructions,
@@ -272,6 +275,19 @@ func (b *AIBot) handleMessage(ctx context.Context, m *discordgo.MessageCreate) {
 
 	source := b.findEditSource(ctx, m)
 	intent, prompt := classifyMessage(m.Content, self.ID, source.url != "")
+	if intent == intentChat && b.decisions != nil && b.flags.Enabled(ctx, IntentDecisions) && !b.isDegraded(ctx) {
+		var res dispatchResult
+		intent, prompt, res = b.decideIntent(ctx, m, prompt, source)
+		span.SetAttributes(
+			attribute.String("dispatch.source", res.source),
+			attribute.String("dispatch.choice", res.choice),
+			attribute.Float64("dispatch.confidence", res.confidence),
+			attribute.Bool("dispatch.accepted", res.accepted),
+		)
+		logger.InfoContext(ctx, "dispatch decision",
+			slog.String("choice", res.choice), slog.Float64("confidence", res.confidence),
+			slog.Bool("accepted", res.accepted))
+	}
 	// Clean is asked for with 🫧 in the message text (not as a reaction), and
 	// is sticky: an edit of a clean image stays clean.
 	clean := hasCleanEmoji(m.Content) || (intent == intentEdit && source.clean)

@@ -13,6 +13,10 @@ const (
 	chatModel           = shared.ChatModelGPT6Luna
 	chatReasoningEffort = shared.ReasoningEffortLow
 
+	// decisionModel guesses intent through the Decisions API, which accepts
+	// only this model.
+	decisionModel = shared.ChatModelGPT6Luna
+
 	// imageGenerateModel draws pictures for "draw me ..." requests. openai-go
 	// v3.91.1 has no constant for the 2.6 Flare model, so it is named directly.
 	imageGenerateModel = openai.ImageModel("gpt-image-2.6-flare")

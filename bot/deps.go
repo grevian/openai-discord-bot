@@ -75,6 +75,14 @@ type responsesAPI interface {
 	New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error)
 }
 
+// decisionsAPI is the subset of the OpenAI decisions service the bot uses.
+// *openai.DecisionService satisfies it.
+type decisionsAPI interface {
+	New(ctx context.Context, body openai.DecisionNewParams, opts ...option.RequestOption) (*openai.Decision, error)
+}
+
+var _ decisionsAPI = (*openai.DecisionService)(nil)
+
 // discordAPI is the subset of the Discord session the bot uses: the REST
 // calls, plus the two reads it makes from the gateway state cache.
 type discordAPI interface {
