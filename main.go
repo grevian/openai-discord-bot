@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,21 +17,29 @@ func main() {
 	config.Configure(serviceCtx)
 	logger := config.GetLogger()
 
-	logger.Info("Creating discord client")
-	discordSession, err := config.GetDiscordSession()
-	if err != nil {
-		log.Fatal("Failed to instantiate Discord client", err)
-	}
-	err = discordSession.Open()
-	if err != nil {
-
-		log.Fatal("Failed to connect to Discord", err)
+	fatal := func(msg string, err error) {
+		logger.Error(msg, slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
 	logger.Info("connecting to OpenAI")
 	openapiClient, err := config.GetOpenAISession()
 	if err != nil {
-		log.Fatal("Failed to instantiate OpenAPI client", slog.Any("error", err))
+		fatal("Failed to instantiate OpenAI client", err)
+	}
+
+	logger.Info("Creating discord client")
+	discordSession, err := config.GetDiscordSession()
+	if err != nil {
+		fatal("Failed to instantiate Discord client", err)
+	}
+	if err = discordSession.Open(); err != nil {
+		fatal("Failed to connect to Discord", err)
+	}
+
+	convStorage, err := config.GetStorage()
+	if err != nil {
+		fatal("Failed to set up conversation storage", err)
 	}
 
 	// Feature flags: loaded now and every minute in the background. Until the
@@ -41,7 +48,7 @@ func main() {
 	flagCache := bot.NewFlags(config.GetFlagsBackend())
 	go flagCache.Run(serviceCtx, time.Minute)
 
-	botInstance := bot.NewAIBot(serviceCtx, cancel, openapiClient, discordSession, config.GetStorage(), config.GetImageStorage(), config.GetBotSettings(), flagCache)
+	botInstance := bot.NewAIBot(serviceCtx, cancel, openapiClient, discordSession, convStorage, config.GetImageStorage(), config.GetBotSettings(), flagCache)
 
 	if g := config.GetGallery(); g != nil {
 		botInstance.SetGallery(g)

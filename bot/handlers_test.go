@@ -283,7 +283,7 @@ func TestDrawGeneratesAndDispatchesImage(t *testing.T) {
 	}
 
 	want := []storedMessage{
-		{channelID, "alice (user-1) on guild-1", "a cat"},
+		{channelID, "alice (user-1) on guild-1", "User: a cat"},
 		{channelID, "Bot", testImageBaseURL + "/guild-1/" + stored[0].ID},
 	}
 	if got := tb.threads.addedMessages(); !equalStored(got, want) {
@@ -372,7 +372,7 @@ func TestEditUsesAttachment(t *testing.T) {
 		t.Fatalf("unexpected Discord messages %+v", sent)
 	}
 	added := tb.threads.addedMessages()
-	if len(added) == 0 || added[0].Message != "edit: add a hat (source: "+srcURL+")" {
+	if len(added) == 0 || added[0].Message != "User: edit: add a hat (source: "+srcURL+")" {
 		t.Errorf("unexpected stored messages %+v", added)
 	}
 }
@@ -442,8 +442,8 @@ func TestFindEditSourceImage(t *testing.T) {
 			tb := newTestBot(t)
 			m := mention("x")
 			tt.setup(tb.discord, m)
-			if got := tb.bot.findEditSourceImage(context.Background(), m); got != tt.want {
-				t.Errorf("findEditSourceImage = %q, want %q", got, tt.want)
+			if got := tb.bot.findEditSource(context.Background(), m).url; got != tt.want {
+				t.Errorf("findEditSource url = %q, want %q", got, tt.want)
 			}
 		})
 	}

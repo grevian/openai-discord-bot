@@ -109,6 +109,8 @@ Secrets live in SSM SecureString parameters and are read by the instance at star
 
 ## Attaching to Discord
 
-You can authorize the currently deployed bot to your server with the following OAuth2 URL: https://discord.com/api/oauth2/authorize?client_id=1076924748124143727&permissions=395204176896&scope=bot
+You can authorize the currently deployed bot to your server with the following OAuth2 URL: https://discord.com/api/oauth2/authorize?client_id=1076924748124143727&permissions=309237746688&scope=bot
+
+The invite asks only for View Channel, Send Messages, Attach Files (image replies), Read Message History, Create Public Threads and Send Messages in Threads.
 
 Sometimes the bot ends up in a discord role with the same name as a the bot, which makes @ messages directed at it quite confusing, after adding the bot I'd suggest going to your server settings, and looking for a role with the same name as the bot user, if you see it, rename it something else like "GPTChatBot"
