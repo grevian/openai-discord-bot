@@ -30,7 +30,9 @@ receivers:
 
   journald:
     units:
-      - bot.service
+      # bot.service is not read here: the bot sends its own logs over OTLP and
+      # also writes them to stderr (journalctl -u bot), so reading it would
+      # ship every line twice.
       - otel-collector.service
     priority: info
 

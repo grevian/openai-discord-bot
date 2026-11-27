@@ -18,7 +18,7 @@ receivers:
   - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.164.0
   # cpu, memory, load and filesystem scrapers
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver v0.164.0
-  # bot.service and otel-collector.service logs (runs journalctl)
+  # otel-collector.service logs (the bot ships its own over OTLP) (runs journalctl)
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver v0.164.0
 
 processors:
