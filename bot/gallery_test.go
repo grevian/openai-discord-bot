@@ -95,6 +95,23 @@ func TestDrawIsOfferedToTheGallery(t *testing.T) {
 	}
 }
 
+func TestCleanDrawIsMarkedCleanInTheGallery(t *testing.T) {
+	g := &fakeGallery{}
+	tb := drawingBot(t, g)
+
+	tb.bot.handleMessage(context.Background(), mention("draw me a picture of a cat 🫧"))
+	tb.bot.galleryWG.Wait()
+	dog := mention("draw me a picture of a dog")
+	dog.ID = "msg-2"
+	tb.bot.handleMessage(context.Background(), dog)
+	tb.bot.galleryWG.Wait()
+
+	got := g.submissions()
+	if len(got) != 2 || !got[0].Clean || got[1].Clean {
+		t.Fatalf("submissions = %+v", got)
+	}
+}
+
 func TestEditIsOfferedToTheGallery(t *testing.T) {
 	g := &fakeGallery{}
 	tb := drawingBot(t, g)
